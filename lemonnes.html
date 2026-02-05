@@ -764,8 +764,8 @@
 
   <script>
 (() => {
-  
-  
+  const BUILD = new Date().toISOString().replace('T',' ').slice(0,19);
+  console.log('LemonNES Build:', BUILD);
 
   // ===== GLOBAL SETTINGS OBJECT =====
   const Settings = {
@@ -809,15 +809,31 @@
     setButton(player, button, pressed) {
       if(player !== 0) return; // Only player 1 supported for now
       const bit = this.buttonMap[button];
-      
+      console.log('setButton called:', button, 'bit:', bit, 'pressed:', pressed, 'state1 before:', this.state1.toString(2));
+      if(bit === undefined) {
+        console.warn('Unknown button:', button);
+        return;
       }
       if(pressed) {
         this.state1 |= (1 << bit);
       } else {
         this.state1 &= ~(1 << bit);
       }
-      
-
+      console.log('state1 after:', this.state1.toString(2));
+    }
+    handleKeyEvent(code, pressed) {
+      const bit = this.keyMap[code];
+      if(bit === undefined) return;
+      if(pressed) {
+        this.state1 |= (1 << bit);
+      } else {
+        this.state1 &= ~(1 << bit);
+      }
+    }
+    write(v){ this.latch = v & 1; if(this.latch){ this.shift1=this.state1; this.shift2=this.state2; }}
+    read1(){ const out = this.shift1 & 1; if(!this.latch) this.shift1 = (this.shift1>>>1)|0x80; return out; }
+    read2(){ const out = this.shift2 & 1; if(!this.latch) this.shift2 = (this.shift2>>>1)|0x80; return out; }
+  }
 
   // === APU ===
   class APU {
@@ -1947,7 +1963,42 @@ class CPU6502{
     }
   };
 
- 
+  // Touch handling for all control buttons
+  console.log('Setting up touch controls for', document.querySelectorAll('.touch-btn').length, 'buttons');
+  document.querySelectorAll('.touch-btn').forEach(btn => {
+    const buttonName = btn.dataset.button;
+    console.log('Button:', buttonName, 'element:', btn.className);
+    
+    btn.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      console.log('Touch start:', buttonName);
+      setBtnState(btn, true);
+      if(buttonName && nes.controllers && Settings.input.touch) {
+        console.log('Setting button', buttonName, 'to pressed');
+        nes.controllers.setButton(0, buttonName, true);
+      }
+    }, {passive: false});
+    
+    btn.addEventListener('touchend', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      console.log('Touch end:', buttonName);
+      setBtnState(btn, false);
+      if(buttonName && nes.controllers && Settings.input.touch) {
+        nes.controllers.setButton(0, buttonName, false);
+      }
+    }, {passive: false});
+    
+    btn.addEventListener('touchcancel', (e) => {
+      if(e) e.preventDefault();
+      console.log('Touch cancel:', buttonName);
+      setBtnState(btn, false);
+      if(buttonName && nes.controllers && Settings.input.touch) {
+        nes.controllers.setButton(0, buttonName, false);
+      }
+    }, {passive: false});
+  });
 
   // Desktop keyboard sync - make virtual buttons light up
   const keyMap = {
