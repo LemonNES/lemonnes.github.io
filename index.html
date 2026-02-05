@@ -1,0 +1,1550 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>LemonNES</title>
+  <style>
+    :root { --bg:#0b0f14; --fg:#e8f0ff; --muted:#8aa0b6; --acc:#73d7ff; --card:#121926; }
+    html,body{
+      height:100%; margin:0; background:var(--bg); color:var(--fg);
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+      overflow: hidden; /* Prevent body scroll, we handle internal scrolling */
+      touch-action: none; /* Disable browser zooming/panning globally */
+    }
+    .wrap{display:grid; grid-template-columns: 1fr 340px; gap:16px; padding:16px; box-sizing:border-box;}
+    header{grid-column: 1 / -1; display:flex; align-items:center; justify-content:space-between}
+    header h1{font-size:18px; margin:0; font-weight:600}
+    header .sub{color:var(--muted); font-size:12px}
+    .screen{background:#000; padding:8px; border-radius:16px; box-shadow: 0 10px 30px rgba(0,0,0,.35); display:flex; align-items:center; justify-content:center; position: relative;}
+    canvas{image-rendering: pixelated; image-rendering: crisp-edges; border-radius:12px; background:#000; touch-action:none;}
+    .side{background:var(--card); border:1px solid rgba(255,255,255,.06); border-radius:16px; padding:12px;}
+    .row{display:flex; align-items:center; gap:10px;}
+    .row + .row{margin-top:10px}
+    label{font-size:12px; color:var(--muted)}
+    .stat{font:12px/1.4 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono"; color:#99b3cc}
+    button, input[type="file"]::file-selector-button{background:#1a2433; color:var(--fg); border:1px solid rgba(255,255,255,.08); padding:8px 10px; border-radius:12px; cursor:pointer}
+    button:disabled{opacity:.5; cursor:not-allowed}
+    .kbd{display:inline-block; padding:.1rem .4rem; border-radius:6px; background:#0e1624; border:1px solid rgba(255,255,255,.05); font:11px ui-monospace}
+    details{margin-top:10px}
+    summary{cursor:pointer; color:var(--acc)}
+    ul{margin:.25rem 0 .5rem 1.25rem}
+    .grid2{display:grid; grid-template-columns: 1fr 1fr; gap:6px}
+    
+    /* Mobile controls overlay */
+    .mobile-controls { display: none; position: fixed; left: 0; right: 0; bottom: 0; z-index: 1000; pointer-events:none; }
+    .mobile-controls.active { display: flex; pointer-events: auto; flex-direction: row; justify-content: space-between; width: 100vw; padding: 0 2vw 2vw 2vw; box-sizing: border-box; user-select: none; }
+    .dpad, .abpad { display: grid; grid-template-columns: repeat(3, 44px); grid-template-rows: repeat(3, 44px); gap: 4px; }
+    .abpad { grid-template-columns: 44px 44px; grid-template-rows: 44px 44px; gap: 16px; align-self: flex-end; }
+    .mobile-btn { background: #1a2433 !important; border: 2px solid #567 !important; border-radius: 8px !important; color: #e0e8ff !important; font-size: 18px !important; font-family: ui-monospace !important; width: 44px !important; height: 44px !important; display: flex !important; align-items: center !important; justify-content: center !important; user-select: none !important; touch-action: none !important; transition: background 0.1s !important; pointer-events: auto !important; }
+    .mobile-btn:active, .mobile-btn.pressed { background: #73d7ff !important; color: #000 !important; }
+
+    /* Settings Styles */
+    .settings-dock { display: flex; justify-content: center; align-items: flex-start; flex: 0 0 auto; padding-top: 16px; pointer-events: auto; z-index: 1001; }
+    #btnSettings { width: 44px !important; height: 44px !important; font-size: 24px !important; border-radius: 50% !important; background: #1a2433; color: #8aa0b6; border: 1px solid rgba(255,255,255,0.2) !important; }
+    #btnSettings.active { background: #73d7ff !important; color: #000 !important; border-color: #73d7ff !important; }
+    .settings-modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 2000; align-items: center; justify-content: center; backdrop-filter: blur(4px); }
+    .settings-modal.active { display: flex; }
+    .settings-container { background: var(--card); border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; width: 90%; max-width: 600px; max-height: 80vh; overflow: hidden; box-shadow: 0 20px 50px rgba(0,0,0,0.5); display: flex; flex-direction: column; }
+    .settings-header { background: rgba(255,255,255,0.03); padding: 14px 16px; font-size: 16px; font-weight: 600; border-bottom: 1px solid rgba(255,255,255,0.05); color: var(--acc); display: flex; justify-content: space-between; align-items: center; }
+    .settings-close { cursor: pointer; color: var(--muted); font-size: 24px; padding: 0 4px; line-height: 1; }
+    
+    /* SCROLL FIX: Allow vertical touch actions here */
+    .settings-body { 
+      flex: 1; 
+      padding: 20px; 
+      overflow-y: auto; 
+      touch-action: pan-y; /* Enable vertical scrolling */
+      -webkit-overflow-scrolling: touch; /* Momentum scrolling on iOS */
+      overscroll-behavior: contain; /* Prevent scrolling parent body */
+    }
+    
+    .setting-section { margin-bottom: 32px; }
+    .section-title { font-size: 14px; font-weight: 600; color: var(--acc); margin-bottom: 16px; text-transform: uppercase; letter-spacing: 0.5px; display: flex; align-items: center; gap: 8px; }
+    .section-icon { font-size: 18px; }
+    .setting-row { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+    .setting-row:last-child { border-bottom: none; }
+    .setting-label { font-size: 14px; color: var(--fg); }
+    .setting-description { font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .toggle-switch { position: relative; width: 44px; height: 24px; background: rgba(255,255,255,0.1); border-radius: 12px; cursor: pointer; transition: background 0.2s; flex-shrink: 0; }
+    .toggle-switch.active { background: var(--acc); }
+    .toggle-knob { position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; background: white; border-radius: 50%; transition: transform 0.2s; }
+    .toggle-switch.active .toggle-knob { transform: translateX(20px); }
+    input[type="range"] { width: 120px; height: 4px; background: rgba(255,255,255,0.1); border-radius: 2px; outline: none; -webkit-appearance: none; }
+    input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; background: var(--acc); border-radius: 50%; cursor: pointer; }
+    input[type="text"], input[type="url"] { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: var(--fg); padding: 8px 12px; border-radius: 8px; font-size: 13px; width: 100%; box-sizing: border-box; }
+    input[type="text"]:focus, input[type="url"]:focus { outline: none; border-color: var(--acc); }
+    .btn-primary { background: var(--acc); color: #000; border: none; padding: 10px 20px; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; transition: opacity 0.2s; }
+    .btn-primary:hover { opacity: 0.9; }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-secondary { background: rgba(255,255,255,0.1); color: var(--fg); border: 1px solid rgba(255,255,255,0.1); padding: 10px 20px; border-radius: 8px; font-size: 13px; cursor: pointer; transition: background 0.2s; }
+    .btn-secondary:hover { background: rgba(255,255,255,0.15); }
+    .error-message { color: #ff6b6b; font-size: 12px; margin-top: 8px; }
+    .success-message { color: #51cf66; font-size: 12px; margin-top: 8px; }
+    .button-group { display: flex; gap: 8px; margin-top: 12px; }
+    .speed-display { font-size: 13px; color: var(--muted); min-width: 40px; text-align: right; }
+    .scanlines { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; background: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.15), rgba(0, 0, 0, 0.15) 1px, transparent 1px, transparent 2px); border-radius: 12px; display: none; }
+    .scanlines.active { display: block; }
+
+    @media (max-width: 900px) {
+      html,body { overflow-x: hidden; overflow-y: hidden; touch-action: none; }
+      .wrap { display: block; padding: 2vw; }
+      .side { margin-top: 20px; }
+      .screen { justify-content: center; }
+      canvas { width: 98vw !important; height: auto !important; max-width: 100vw; max-height: 70vw; }
+      .mobile-controls { display: flex !important; }
+      .settings-container { width: 95%; max-height: 85vh; }
+    }
+    @media (pointer: coarse) {
+      .mobile-controls { display: flex !important; }
+      .settings-container { width: 95%; max-height: 85vh; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+   
+    <div class="screen">
+      <canvas id="screen" width="256" height="240" style="width:768px;height:720px"></canvas>
+      <div class="scanlines" id="scanlines"></div>
+    </div>
+ <header>
+      <div>
+        <h1> <span class="sub"></span></h1>
+        <div class="sub"></div>
+      </div>
+      <div class="stat" id="build"></div>
+ </header>
+    <aside class="side">
+      <div class="row">
+        <input id="rom" type="file" accept=".nes,application/octet-stream" />
+        <button id="btnRun" disabled>Run</button>
+        <button id="btnPause" disabled>Pause</button>
+        <button id="btnReset" disabled>Reset</button>
+      </div>
+      <div class="row stat">
+        <div>ROM: <span id="romName">—</span></div>
+      </div>
+      <div class="grid2 stat">
+        <div>FPS: <span id="fps">0</span></div>
+        <div>CPU: <span id="mhz">—</span></div>
+        <div>Mapper: <span id="mapper">—</span></div>
+        <div>Mirroring: <span id="mirror">—</span></div>
+        <div>IRQs: <span id="irqs">—</span></div>
+      </div>
+
+      <details>
+        <summary>Controls</summary>
+        <ul>
+          <li>P1: <span class="kbd">Arrow Keys</span>, <span class="kbd">Z</span>=A, <span class="kbd">X</span>=B, <span class="kbd">Enter</span>=Start, <span class="kbd">Right Shift</span>=Select</li>
+          <li>Touch: Mobile controls are visible on touch devices</li>
+        </ul>
+      </details>
+    </aside>
+  </div>
+
+  <div class="mobile-controls" id="mobileControls" aria-hidden="true">
+    <div style="flex:1;">
+      <div class="dpad">
+        <div></div>
+        <button class="mobile-btn" data-key="ArrowUp" aria-label="Up">&#8593;</button>
+        <div></div>
+        <button class="mobile-btn" data-key="ArrowLeft" aria-label="Left">&#8592;</button>
+        <div></div>
+        <button class="mobile-btn" data-key="ArrowRight" aria-label="Right">&#8594;</button>
+        <div></div>
+        <button class="mobile-btn" data-key="ArrowDown" aria-label="Down">&#8595;</button>
+        <div></div>
+      </div>
+    </div>
+    <div class="settings-dock">
+      <button id="btnSettings" class="mobile-btn" aria-label="Settings">⚙</button>
+    </div>
+    <div style="flex:1;display:flex;flex-direction:column;align-items:flex-end;justify-content:flex-end;gap:8px;">
+      <div class="abpad">
+        <button class="mobile-btn" data-key="KeyZ" aria-label="A">A</button>
+        <button class="mobile-btn" data-key="KeyX" aria-label="B">B</button>
+        <button class="mobile-btn" data-key="Enter" aria-label="Start">Start</button>
+        <button class="mobile-btn" data-key="ShiftRight" aria-label="Select">Sel</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="settingsModal" class="settings-modal">
+    <div class="settings-container">
+      <div class="settings-header">
+        <span>Settings</span>
+        <span class="settings-close" onclick="closeSettings()">✕</span>
+      </div>
+      <div class="settings-body" id="settingsBody">
+        <div class="setting-section">
+          <div class="section-title"><span class="section-icon">🔊</span><span>Audio</span></div>
+          <div class="setting-row">
+            <div><div class="setting-label">Audio Enabled</div><div class="setting-description">Enable or disable sound output</div></div>
+            <div class="toggle-switch active" id="toggleAudioEnabled"><div class="toggle-knob"></div></div>
+          </div>
+          <div class="setting-row">
+            <div><div class="setting-label">Volume</div><div class="setting-description">Adjust audio volume level</div></div>
+            <div style="display: flex; align-items: center; gap: 12px;"><input type="range" id="sliderVolume" min="0" max="100" value="80" /><span class="speed-display" id="volumeDisplay">80%</span></div>
+          </div>
+        </div>
+        <div class="setting-section">
+          <div class="section-title"><span class="section-icon">🎮</span><span>Input</span></div>
+          <div class="setting-row">
+            <div><div class="setting-label">Keyboard Input</div><div class="setting-description">Enable keyboard controls</div></div>
+            <div class="toggle-switch active" id="toggleKeyboard"><div class="toggle-knob"></div></div>
+          </div>
+          <div class="setting-row">
+            <div><div class="setting-label">Touch Input</div><div class="setting-description">Enable on-screen touch controls</div></div>
+            <div class="toggle-switch active" id="toggleTouch"><div class="toggle-knob"></div></div>
+          </div>
+          <div class="setting-row">
+            <div><div class="setting-label">Gamepad Input</div><div class="setting-description">Enable USB/Bluetooth gamepad (experimental)</div></div>
+            <div class="toggle-switch" id="toggleGamepad"><div class="toggle-knob"></div></div>
+          </div>
+        </div>
+        <div class="setting-section">
+          <div class="section-title"><span class="section-icon">🖥</span><span>Display</span></div>
+          <div class="setting-row">
+            <div><div class="setting-label">Integer Scaling</div><div class="setting-description">Scale canvas by whole numbers only</div></div>
+            <div class="toggle-switch active" id="toggleIntegerScale"><div class="toggle-knob"></div></div>
+          </div>
+          <div class="setting-row">
+            <div><div class="setting-label">Scanlines</div><div class="setting-description">Add CRT scanline effect</div></div>
+            <div class="toggle-switch" id="toggleScanlines"><div class="toggle-knob"></div></div>
+          </div>
+        </div>
+        <div class="setting-section">
+          <div class="section-title"><span class="section-icon">⚡</span><span>Emulation</span></div>
+          <div class="setting-row">
+            <div><div class="setting-label">Emulation Speed</div><div class="setting-description">Adjust game speed (1.0x = normal)</div></div>
+            <div style="display: flex; align-items: center; gap: 12px;"><input type="range" id="sliderSpeed" min="25" max="200" value="100" step="25" /><span class="speed-display" id="speedDisplay">1.0x</span></div>
+          </div>
+          <div class="setting-row">
+            <div><div class="setting-label">Reset Emulator</div><div class="setting-description">Reset CPU, PPU, APU (keeps ROM loaded)</div></div>
+            <button class="btn-secondary" id="btnResetEmulator">Reset</button>
+          </div>
+        </div>
+        <div class="setting-section">
+          <div class="section-title"><span class="section-icon">📦</span><span>ROM Management</span></div>
+          <div class="setting-row" style="flex-direction: column; align-items: stretch;">
+            <div><div class="setting-label">Load ROM from URL</div><div class="setting-description">Load a .nes file from a direct URL</div></div>
+            <input type="url" id="inputROMUrl" placeholder="https://example.com/game.nes" style="margin-top: 12px;" />
+            <div class="button-group"><button class="btn-primary" id="btnFetchROM">Fetch ROM</button></div>
+            <div id="romUrlStatus"></div>
+          </div>
+        </div>
+        <div class="setting-section">
+          <div class="section-title"><span class="section-icon">💾</span><span>Save States</span></div>
+          <div class="setting-row" style="flex-direction: column; align-items: stretch;">
+            <div><div class="setting-label">Export Save State</div><div class="setting-description">Save current emulator state to file</div></div>
+            <div class="button-group"><button class="btn-primary" id="btnExportState" disabled>Export .sav</button></div>
+          </div>
+          <div class="setting-row" style="flex-direction: column; align-items: stretch;">
+            <div><div class="setting-label">Import Save State</div><div class="setting-description">Load previously saved state</div></div>
+            <div class="button-group"><input type="file" id="inputSaveState" accept=".sav" style="display: none;" /><button class="btn-secondary" id="btnImportState" disabled>Import .sav</button></div>
+            <div id="saveStateStatus"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+(() => {
+  const BUILD = new Date().toISOString().replace('T',' ').slice(0,19);
+  document.getElementById('build').textContent = `build ${BUILD}`;
+
+  // ===== GLOBAL SETTINGS OBJECT =====
+  const Settings = {
+    input: { keyboard: true, touch: true, gamepad: false },
+    audio: { enabled: true, volume: 0.8 },
+    display: { integerScale: true, scanlines: false },
+    emulation: { speed: 1 }
+  };
+  // ===== APU Timing Constants =====
+  const CPU_FREQ = 1789773;
+  const AUDIO_SAMPLE_RATE = 44100;
+  const CYCLES_PER_SAMPLE = CPU_FREQ / AUDIO_SAMPLE_RATE;
+  const NTSC_FPS = 60.0988;
+  const CPU_CYCLES_PER_FRAME = Math.round(CPU_FREQ / NTSC_FPS);
+  // ===== Utilities =====
+  const clamp=(v,min,max)=>v<min?min:v>max?max:v;
+  const u8 = n => n & 0xFF;
+  const u16 = n => n & 0xFFFF;
+  const toHex=(n,len=2)=>('0'.repeat(len)+n.toString(16).toUpperCase()).slice(-len);
+  
+  // ===== Controllers =====
+  class Controllers{
+    constructor(){
+      this.state1=0; this.state2=0; this.latch=0; this.shift1=0;
+      this.shift2=0;
+      this.keyMap = { 'KeyZ':0, 'KeyX':1, 'ShiftRight':2, 'Enter':3, 'ArrowUp':4,'ArrowDown':5,'ArrowLeft':6,'ArrowRight':7 };
+      this.bindKeys();
+      this.mobileActive = false;
+      this.initMobile();
+    }
+    bindKeys(){
+      window.addEventListener('keydown',e=>{
+        if(e.repeat) return;
+        if(!Settings.input.keyboard) return;
+        if(this.keyMap[e.code]!==undefined){ this.state1 |= (1<<this.keyMap[e.code]); e.preventDefault(); }
+      });
+      window.addEventListener('keyup',e=>{
+        if(!Settings.input.keyboard) return;
+        if(this.keyMap[e.code]!==undefined){ this.state1 &= ~(1<<this.keyMap[e.code]); e.preventDefault(); }
+      });
+    }
+    write(v){ this.latch = v & 1; if(this.latch){ this.shift1=this.state1; this.shift2=this.state2; }}
+    read1(){ const out = this.shift1 & 1; if(!this.latch) this.shift1 = (this.shift1>>>1)|0x80; return out; }
+    read2(){ const out = this.shift2 & 1; if(!this.latch) this.shift2 = (this.shift2>>>1)|0x80; return out; }
+    initMobile() {
+      const mobileControls = document.getElementById('mobileControls');
+      if (!mobileControls) return;
+      const enableMobile = () => { mobileControls.classList.add('active'); this.mobileActive = true; };
+      const disableMobile = () => { mobileControls.classList.remove('active'); this.mobileActive = false; };
+      if ('ontouchstart' in window || navigator.maxTouchPoints || window.innerWidth < 900) { enableMobile(); }
+      window.addEventListener('resize', ()=>{ if(window.innerWidth < 900) enableMobile(); else if(!('ontouchstart' in window || navigator.maxTouchPoints)) disableMobile(); });
+      const btns = mobileControls.querySelectorAll('.mobile-btn');
+      for(const btn of btns) {
+        if(btn.id === 'btnSettings') continue;
+        const code = btn.dataset.key;
+        const bit = this.keyMap[code];
+        if(bit === undefined) continue;
+        let isPressed = false;
+        const press = e => { if(!Settings.input.touch) return; if(isPressed) return; isPressed = true; this.state1 |= (1<<bit); btn.classList.add('pressed'); e.preventDefault(); };
+        const release = e => { if(!Settings.input.touch) return; isPressed = false; this.state1 &= ~(1<<bit); btn.classList.remove('pressed'); e.preventDefault(); };
+        btn.addEventListener('touchstart', press, {passive:false});
+        btn.addEventListener('touchend', release, {passive:false});
+        btn.addEventListener('touchcancel', release, {passive:false});
+        btn.addEventListener('mousedown', press);
+        btn.addEventListener('mouseup', release);
+        btn.addEventListener('mouseleave', release);
+        btn.addEventListener('contextmenu', e=>e.preventDefault());
+      }
+      mobileControls.addEventListener('touchmove', e=>{ if(e.target.classList.contains('mobile-btn')) e.preventDefault(); }, {passive:false});
+    }
+  }
+
+  // === APU ===
+  class APU {
+    constructor() {
+      this.audioCtx = null; this.scriptNode = null; this.audioBuffer = []; this.bufferSize = 4096;
+      this.cpuCycleAccumulator = 0; this.frameCounter = 0; this.frameMode = 0; this.irqInhibit = false;
+      this.frameIRQ = false; this.frameSequencerCycle = 0;
+      this.pulse1 = this.createPulseChannel(); this.pulse2 = this.createPulseChannel();
+      this.triangle = this.createTriangleChannel(); this.noise = this.createNoiseChannel(); this.dmc = this.createDMCChannel();
+      this.totalCycles = 0; this.initAudio();
+      this.lengthTable = [10,254, 20, 2, 40, 4, 80, 6, 160, 8, 60, 10, 14, 12, 26, 14, 12, 16, 24, 18, 48, 20, 96, 22, 192, 24, 72, 26, 16, 28, 32, 30];
+      this.noiseTable = [4, 8, 16, 32, 64, 96, 128, 160, 202, 254, 380, 508, 762, 1016, 2034, 4068];
+      this.dmcTable = [428, 380, 340, 320, 286, 254, 226, 214, 190, 160, 142, 128, 106, 84, 72, 54];
+    }
+    initAudio() {
+      try {
+        this.audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: AUDIO_SAMPLE_RATE });
+        this.scriptNode = this.audioCtx.createScriptProcessor(this.bufferSize, 0, 1);
+        this.scriptNode.onaudioprocess = (e) => {
+          const output = e.outputBuffer.getChannelData(0);
+          for (let i = 0; i < output.length; i++) { output[i] = this.audioBuffer.shift() || 0; }
+          while (this.audioBuffer.length < this.bufferSize * 2) { this.audioBuffer.push(0); }
+        };
+        this.scriptNode.connect(this.audioCtx.destination);
+        document.addEventListener('click', () => { if (this.audioCtx.state === 'suspended') { this.audioCtx.resume(); } }, { once: true });
+      } catch (e) { console.warn('Audio init failed:', e); }
+    }
+    createPulseChannel() { return { enabled: false, lengthCounter: 0, lengthHalt: false, constantVolume: false, volume: 0, duty: 0, dutyPos: 0, timer: 0, timerPeriod: 0, timerCycle: 0, sweepEnabled: false, sweepPeriod: 0, sweepNegate: false, sweepShift: 0, sweepReload: false, sweepCounter: 0, envelopeStart: false, envelopeCounter: 0, envelopeVolume: 0, envelopePeriod: 0, output: 0 }; }
+    createTriangleChannel() { return { enabled: false, lengthCounter: 0, lengthHalt: false, timer: 0, timerPeriod: 0, timerCycle: 0, linearCounter: 0, linearCounterReload: 0, linearCounterControl: false, linearReloadFlag: false, sequencePos: 0, output: 0 }; }
+    createNoiseChannel() { return { enabled: false, lengthCounter: 0, lengthHalt: false, constantVolume: false, volume: 0, timer: 0, timerPeriod: 0, timerCycle: 0, mode: false, shiftRegister: 1, envelopeStart: false, envelopeCounter: 0, envelopeVolume: 0, envelopePeriod: 0, output: 0 }; }
+    createDMCChannel() { return { enabled: false, irqEnabled: false, loop: false, timer: 0, timerPeriod: 0, timerCycle: 0, output: 0, sampleAddress: 0, sampleLength: 0, currentAddress: 0, bytesRemaining: 0, sampleBuffer: 0, sampleBufferEmpty: true, shiftRegister: 0, bitsRemaining: 0, silence: true }; }
+    step(cpuCycles) {
+      this.totalCycles += cpuCycles; this.stepFrameSequencer(cpuCycles);
+      for (let i = 0; i < cpuCycles; i++) {
+        if ((this.totalCycles + i) % 2 === 0) { this.stepPulseTimer(this.pulse1); this.stepPulseTimer(this.pulse2); this.stepNoiseTimer(this.noise); }
+        this.stepTriangleTimer(this.triangle); this.stepDMCTimer(this.dmc);
+      }
+      this.cpuCycleAccumulator += cpuCycles;
+      while (this.cpuCycleAccumulator >= CYCLES_PER_SAMPLE) {
+        this.cpuCycleAccumulator -= CYCLES_PER_SAMPLE;
+        const sample = this.mixOutput();
+        this.audioBuffer.push(sample * (Settings.audio.enabled ? 1 : 0) * Settings.audio.volume);
+        if (this.audioBuffer.length > this.bufferSize * 4) { this.audioBuffer = this.audioBuffer.slice(-this.bufferSize * 2); }
+      }
+    }
+    stepFrameSequencer(cpuCycles) {
+      this.frameSequencerCycle += cpuCycles; const FRAME_COUNTER_PERIOD = 7457.5;
+      while (this.frameSequencerCycle >= FRAME_COUNTER_PERIOD) {
+        this.frameSequencerCycle -= FRAME_COUNTER_PERIOD;
+        if (this.frameMode === 0) {
+          switch (this.frameCounter) {
+            case 0: case 2: this.clockEnvelopes(); this.clockTriangleLinearCounter(); break;
+            case 1: this.clockEnvelopes(); this.clockTriangleLinearCounter(); this.clockLengthCounters(); this.clockSweeps(); break;
+            case 3: this.clockEnvelopes(); this.clockTriangleLinearCounter(); this.clockLengthCounters(); this.clockSweeps(); if (!this.irqInhibit) this.frameIRQ = true; break;
+          }
+          this.frameCounter = (this.frameCounter + 1) % 4;
+        } else {
+          switch (this.frameCounter) {
+            case 0: case 2: this.clockEnvelopes(); this.clockTriangleLinearCounter(); break;
+            case 1: case 3: this.clockEnvelopes(); this.clockTriangleLinearCounter(); this.clockLengthCounters(); this.clockSweeps(); break;
+          }
+          this.frameCounter = (this.frameCounter + 1) % 5;
+        }
+      }
+    }
+    stepPulseTimer(pulse) { pulse.timerCycle++; if (pulse.timerCycle >= pulse.timerPeriod + 1) { pulse.timerCycle = 0; pulse.dutyPos = (pulse.dutyPos + 1) % 8; } this.updatePulseOutput(pulse); }
+    stepTriangleTimer(triangle) { if (triangle.lengthCounter > 0 && triangle.linearCounter > 0) { triangle.timerCycle++; if (triangle.timerCycle >= triangle.timerPeriod + 1) { triangle.timerCycle = 0; triangle.sequencePos = (triangle.sequencePos + 1) % 32; } } this.updateTriangleOutput(triangle); }
+    stepNoiseTimer(noise) { noise.timerCycle++; if (noise.timerCycle >= noise.timerPeriod + 1) { noise.timerCycle = 0; const feedback = noise.mode ? ((noise.shiftRegister >> 6) & 1) ^ (noise.shiftRegister & 1) : ((noise.shiftRegister >> 1) & 1) ^ (noise.shiftRegister & 1); noise.shiftRegister = (noise.shiftRegister >> 1) | (feedback << 14); } this.updateNoiseOutput(noise); }
+    stepDMCTimer(dmc) { if (dmc.enabled && dmc.bytesRemaining > 0) { dmc.timerCycle++; if (dmc.timerCycle >= dmc.timerPeriod + 1) { dmc.timerCycle = 0; } } }
+    updatePulseOutput(pulse) {
+      if (!pulse.enabled || pulse.lengthCounter === 0 || pulse.timerPeriod < 8) { pulse.output = 0; return; }
+      const dutyTable = [[0,1,0,0,0,0,0,0], [0,1,1,0,0,0,0,0], [0,1,1,1,1,0,0,0], [1,0,0,1,1,1,1,1]];
+      pulse.output = dutyTable[pulse.duty][pulse.dutyPos] * (pulse.constantVolume ? pulse.volume : pulse.envelopeVolume);
+    }
+    updateTriangleOutput(triangle) { if (!triangle.enabled || triangle.lengthCounter === 0 || triangle.linearCounter === 0) { triangle.output = 0; return; } const seq = [15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]; triangle.output = seq[triangle.sequencePos]; }
+    updateNoiseOutput(noise) { if (!noise.enabled || noise.lengthCounter === 0 || (noise.shiftRegister & 1)) { noise.output = 0; return; } noise.output = (noise.constantVolume ? noise.volume : noise.envelopeVolume); }
+    clockEnvelopes() { this.clockEnvelope(this.pulse1); this.clockEnvelope(this.pulse2); this.clockEnvelope(this.noise); }
+    clockEnvelope(ch) { if (ch.envelopeStart) { ch.envelopeStart = false; ch.envelopeVolume = 15; ch.envelopeCounter = ch.envelopePeriod; } else { if (ch.envelopeCounter === 0) { ch.envelopeCounter = ch.envelopePeriod; if (ch.envelopeVolume > 0) ch.envelopeVolume--; else if (ch.lengthHalt) ch.envelopeVolume = 15; } else { ch.envelopeCounter--; } } }
+    clockLengthCounters() { if (this.pulse1.lengthCounter > 0 && !this.pulse1.lengthHalt) this.pulse1.lengthCounter--; if (this.pulse2.lengthCounter > 0 && !this.pulse2.lengthHalt) this.pulse2.lengthCounter--; if (this.triangle.lengthCounter > 0 && !this.triangle.lengthHalt) this.triangle.lengthCounter--; if (this.noise.lengthCounter > 0 && !this.noise.lengthHalt) this.noise.lengthCounter--; }
+    clockTriangleLinearCounter() { if (this.triangle.linearReloadFlag) { this.triangle.linearCounter = this.triangle.linearCounterReload; } else if (this.triangle.linearCounter > 0) { this.triangle.linearCounter--; } if (!this.triangle.linearCounterControl) { this.triangle.linearReloadFlag = false; } }
+    clockSweeps() { this.clockSweep(this.pulse1, false); this.clockSweep(this.pulse2, true); }
+    clockSweep(pulse, isChannel2) { if (pulse.sweepReload) { pulse.sweepCounter = pulse.sweepPeriod; pulse.sweepReload = false; } else if (pulse.sweepCounter > 0) { pulse.sweepCounter--; } else { pulse.sweepCounter = pulse.sweepPeriod; if (pulse.sweepEnabled && pulse.sweepShift > 0) { const delta = pulse.timerPeriod >> pulse.sweepShift; if (pulse.sweepNegate) { pulse.timerPeriod -= delta + (isChannel2 ? 0 : 1); } else { pulse.timerPeriod += delta; } if (pulse.timerPeriod < 8 || pulse.timerPeriod > 0x7FF) { pulse.lengthCounter = 0; } } } }
+    mixOutput() {
+      const p1 = this.pulse1.output, p2 = this.pulse2.output; const tri = this.triangle.output, noi = this.noise.output, dmc = this.dmc.output;
+      let pulseOut = (p1 + p2 > 0) ? 95.88 / ((8128.0 / (p1 + p2)) + 100) : 0;
+      let tndOut = (tri + 2*noi + dmc > 0) ? 159.79 / ((1.0 / (tri/8227.0 + noi/12241.0 + dmc/22638.0)) + 100) : 0;
+      return (pulseOut + tndOut) * 0.5;
+    }
+    write(addr, val) {
+      switch (addr) {
+        case 0x4000: this.pulse1.duty = (val >> 6) & 3; this.pulse1.lengthHalt = !!(val & 0x20); this.pulse1.constantVolume = !!(val & 0x10); this.pulse1.volume = val & 0x0F; this.pulse1.envelopePeriod = val & 0x0F; break;
+        case 0x4001: this.pulse1.sweepEnabled = !!(val & 0x80); this.pulse1.sweepPeriod = (val >> 4) & 7; this.pulse1.sweepNegate = !!(val & 0x08); this.pulse1.sweepShift = val & 7; this.pulse1.sweepReload = true; break;
+        case 0x4002: this.pulse1.timerPeriod = (this.pulse1.timerPeriod & 0x700) | val; break;
+        case 0x4003: this.pulse1.timerPeriod = (this.pulse1.timerPeriod & 0xFF) | ((val & 7) << 8); if (this.pulse1.enabled) this.pulse1.lengthCounter = this.lengthTable[val >> 3]; this.pulse1.envelopeStart = true; this.pulse1.dutyPos = 0; break;
+        case 0x4004: this.pulse2.duty = (val >> 6) & 3; this.pulse2.lengthHalt = !!(val & 0x20); this.pulse2.constantVolume = !!(val & 0x10); this.pulse2.volume = val & 0x0F; this.pulse2.envelopePeriod = val & 0x0F; break;
+        case 0x4005: this.pulse2.sweepEnabled = !!(val & 0x80); this.pulse2.sweepPeriod = (val >> 4) & 7; this.pulse2.sweepNegate = !!(val & 0x08); this.pulse2.sweepShift = val & 7; this.pulse2.sweepReload = true; break;
+        case 0x4006: this.pulse2.timerPeriod = (this.pulse2.timerPeriod & 0x700) | val; break;
+        case 0x4007: this.pulse2.timerPeriod = (this.pulse2.timerPeriod & 0xFF) | ((val & 7) << 8); if (this.pulse2.enabled) this.pulse2.lengthCounter = this.lengthTable[val >> 3]; this.pulse2.envelopeStart = true; this.pulse2.dutyPos = 0; break;
+        case 0x4008: this.triangle.linearCounterControl = !!(val & 0x80); this.triangle.lengthHalt = !!(val & 0x80); this.triangle.linearCounterReload = val & 0x7F; break;
+        case 0x400A: this.triangle.timerPeriod = (this.triangle.timerPeriod & 0x700) | val; break;
+        case 0x400B: this.triangle.timerPeriod = (this.triangle.timerPeriod & 0xFF) | ((val & 7) << 8); if (this.triangle.enabled) this.triangle.lengthCounter = this.lengthTable[val >> 3]; this.triangle.linearReloadFlag = true; break;
+        case 0x400C: this.noise.lengthHalt = !!(val & 0x20); this.noise.constantVolume = !!(val & 0x10); this.noise.volume = val & 0x0F; this.noise.envelopePeriod = val & 0x0F; break;
+        case 0x400E: this.noise.mode = !!(val & 0x80); this.noise.timerPeriod = this.noiseTable[val & 0x0F]; break;
+        case 0x400F: if (this.noise.enabled) this.noise.lengthCounter = this.lengthTable[val >> 3]; this.noise.envelopeStart = true; break;
+        case 0x4010: this.dmc.irqEnabled = !!(val & 0x80); this.dmc.loop = !!(val & 0x40); this.dmc.timerPeriod = this.dmcTable[val & 0x0F]; break;
+        case 0x4011: this.dmc.output = val & 0x7F; break;
+        case 0x4012: this.dmc.sampleAddress = 0xC000 | (val << 6); break;
+        case 0x4013: this.dmc.sampleLength = (val << 4) | 1; break;
+        case 0x4015:
+          this.pulse1.enabled = !!(val & 0x01); this.pulse2.enabled = !!(val & 0x02); this.triangle.enabled = !!(val & 0x04); this.noise.enabled = !!(val & 0x08); this.dmc.enabled = !!(val & 0x10);
+          if (!this.pulse1.enabled) this.pulse1.lengthCounter = 0; if (!this.pulse2.enabled) this.pulse2.lengthCounter = 0;
+          if (!this.triangle.enabled) this.triangle.lengthCounter = 0; if (!this.noise.enabled) this.noise.lengthCounter = 0;
+          break;
+        case 0x4017:
+          this.frameMode = (val >> 7) & 1; this.irqInhibit = !!(val & 0x40); if (this.irqInhibit) this.frameIRQ = false;
+          this.frameCounter = 0; this.frameSequencerCycle = 0;
+          if (this.frameMode === 1) { this.clockEnvelopes(); this.clockTriangleLinearCounter(); this.clockLengthCounters(); this.clockSweeps(); }
+          break;
+      }
+    }
+    read(addr) {
+      if (addr === 0x4015) {
+        const status = (this.pulse1.lengthCounter > 0 ? 0x01 : 0) | (this.pulse2.lengthCounter > 0 ? 0x02 : 0) | (this.triangle.lengthCounter > 0 ? 0x04 : 0) | (this.noise.lengthCounter > 0 ? 0x08 : 0) | (this.dmc.bytesRemaining > 0 ? 0x10 : 0) | (this.frameIRQ ? 0x40 : 0) | (this.dmc.irqEnabled ? 0x80 : 0);
+        this.frameIRQ = false; return status;
+      }
+      return 0;
+    }
+  }
+
+  // ===== Mappers =====
+  class Mapper { constructor(cart) { this.cart = cart; } prgRead(addr) { return 0; } prgWrite(addr, val) { } chrRead(addr) { return 0; } chrWrite(addr, val) { } ppuCycle() {} }
+  class Mapper0 extends Mapper {
+    constructor(cart) { super(cart); this.prgMask = (cart.prg.length > 0x4000) ? 0x7FFF : 0x3FFF; }
+    prgRead(addr) { return this.cart.prg[(addr - 0x8000) & this.prgMask]; }
+    prgWrite(addr, val) { }
+    chrRead(addr) { return this.cart.chr[addr]; }
+    chrWrite(addr, val) { if (!this.cart.chrROM) { this.cart.chr[addr] = val; } }
+  }
+  class Mapper1 extends Mapper {
+  constructor(c) {
+    super(c);
+    this.shift = 0x10;
+    this.ctrl = 0x0C;  // Initialize with bits 2-3 set (PRG mode 3)
+    this.prgBank = 0;
+    this.chrBank0 = 0;
+    this.chrBank1 = 0;
+    this.prgRAM = new Uint8Array(0x2000); // 8KB PRG RAM
+    this.ppu = null; // Reference to PPU for mirroring updates
+  }
+  
+  writeReg(addr, val) {
+    // Bit 7 = reset
+    if (val & 0x80) {
+      this.shift = 0x10;
+      this.ctrl |= 0x0C;  // Reset to mode 3
+      return;
+    }
+    
+    const complete = (this.shift & 1);
+    this.shift = (this.shift >> 1) | ((val & 1) << 4);
+    
+    if (complete) {
+      const reg = (addr >> 13) & 3;
+      const data = this.shift & 0x1F;
+      this.shift = 0x10;
+      
+      if (reg === 0) {
+        // Control register
+        this.ctrl = data;
+        const mirrorMode = data & 3;
+        // Update mirroring on cart
+        if (mirrorMode === 0) this.cart.mirror = 'single0';
+        else if (mirrorMode === 1) this.cart.mirror = 'single1';
+        else if (mirrorMode === 2) this.cart.mirror = 'vertical';
+        else this.cart.mirror = 'horizontal';
+        
+        // Also update PPU's cached mirror value if PPU is connected
+        if (this.ppu) {
+          this.ppu.mirror = this.cart.mirror;
+        }
+      }
+      else if (reg === 1) {
+        // CHR bank 0
+        this.chrBank0 = data;
+      }
+      else if (reg === 2) {
+        // CHR bank 1
+        this.chrBank1 = data;
+      }
+      else if (reg === 3) {
+        // PRG bank
+        this.prgBank = data & 0x0F;
+      }
+    }
+  }
+  
+  prgRead(addr) {
+    // PRG RAM at $6000-$7FFF
+    if (addr >= 0x6000 && addr < 0x8000) {
+      return this.prgRAM[addr - 0x6000];
+    }
+    
+    const mode = (this.ctrl >> 2) & 3;
+    const prgSize = this.cart.prg.length;
+    
+    if (mode === 0 || mode === 1) {
+      // 32KB mode - ignore low bit of bank
+      const bank32 = (this.prgBank >> 1);
+      const offset = (bank32 * 0x8000) + (addr - 0x8000);
+      return this.cart.prg[offset % prgSize];
+    }
+    else if (mode === 2) {
+      // Fix first bank at $8000, switch 16KB at $C000
+      if (addr < 0xC000) {
+        return this.cart.prg[(addr - 0x8000) % prgSize];
+      } else {
+        const offset = (this.prgBank * 0x4000) + (addr - 0xC000);
+        return this.cart.prg[offset % prgSize];
+      }
+    }
+    else {
+      // mode === 3: Switch 16KB at $8000, fix last bank at $C000
+      if (addr < 0xC000) {
+        const offset = (this.prgBank * 0x4000) + (addr - 0x8000);
+        return this.cart.prg[offset % prgSize];
+      } else {
+        // Last 16KB bank
+        const lastBankOffset = prgSize - 0x4000;
+        return this.cart.prg[lastBankOffset + (addr - 0xC000)];
+      }
+    }
+  }
+  
+  prgWrite(addr, val) {
+    if (addr >= 0x6000 && addr < 0x8000) {
+      // PRG RAM write
+      this.prgRAM[addr - 0x6000] = val;
+    } else {
+      this.writeReg(addr, val);
+    }
+  }
+  
+  chrRead(addr) {
+    const chrSize = this.cart.chr.length;
+    
+    if (chrSize === 0) return 0;
+    
+    const mode = (this.ctrl >> 4) & 1;
+    
+    if (mode === 0) {
+      // 8KB mode - switch entire 8KB, use bank0 >> 1
+      const bank8 = (this.chrBank0 >> 1);
+      const offset = (bank8 * 0x2000) + addr;
+      return this.cart.chr[offset % chrSize];
+    } else {
+      // 4KB mode - separate banks
+      if (addr < 0x1000) {
+        const offset = (this.chrBank0 * 0x1000) + addr;
+        return this.cart.chr[offset % chrSize];
+      } else {
+        const offset = (this.chrBank1 * 0x1000) + (addr - 0x1000);
+        return this.cart.chr[offset % chrSize];
+      }
+    }
+  }
+  
+  chrWrite(addr, val) {
+    if (!this.cart.chrROM) {
+      const chrSize = this.cart.chr.length;
+      
+      if (chrSize === 0) return;
+      
+      const mode = (this.ctrl >> 4) & 1;
+      
+      if (mode === 0) {
+        // 8KB mode
+        const bank8 = (this.chrBank0 >> 1);
+        const offset = (bank8 * 0x2000) + addr;
+        this.cart.chr[offset % chrSize] = val;
+      } else {
+        // 4KB mode
+        if (addr < 0x1000) {
+          const offset = (this.chrBank0 * 0x1000) + addr;
+          this.cart.chr[offset % chrSize] = val;
+        } else {
+          const offset = (this.chrBank1 * 0x1000) + (addr - 0x1000);
+          this.cart.chr[offset % chrSize] = val;
+        }
+      }
+    }
+  }
+}
+
+class Mapper2 extends Mapper {
+  constructor(c) {
+    super(c);
+    this.bank = 0;
+    this.numBanks = Math.floor(c.prg.length / 0x4000);
+  }
+  
+  prgRead(addr) {
+    if (addr < 0xC000) {
+      // Switchable bank at $8000-$BFFF
+      const bankNum = this.bank % this.numBanks;
+      const base = bankNum * 0x4000;
+      return this.cart.prg[base + (addr - 0x8000)];
+    }
+    // Fixed last 16KB bank at $C000-$FFFF
+    const lastBankOffset = this.cart.prg.length - 0x4000;
+    return this.cart.prg[lastBankOffset + (addr - 0xC000)];
+  }
+  
+  prgWrite(addr, val) {
+    // Bank select register
+    this.bank = val & 0x0F;
+  }
+  
+  chrRead(addr) {
+    // Mapper 2 uses CHR RAM, not ROM
+    return this.cart.chr[addr & 0x1FFF];
+  }
+  
+  chrWrite(addr, val) {
+    // CHR RAM is always writable on Mapper 2
+    this.cart.chr[addr & 0x1FFF] = val;
+  }
+}
+class Mapper3 extends Mapper {
+  constructor(c) {
+    super(c);
+    this.chrBank = 0;
+  }
+  
+  prgRead(addr) {
+    // PRG ROM is not banked - either 16KB or 32KB
+    // If 16KB, mirror it; if 32KB, use full range
+    const prgMask = (this.cart.prg.length > 0x4000) ? 0x7FFF : 0x3FFF;
+    return this.cart.prg[(addr - 0x8000) & prgMask];
+  }
+  
+  prgWrite(addr, val) {
+    // Bank select register - lower 2 bits select 8KB CHR bank
+    this.chrBank = val & 0x03;
+  }
+  
+  chrRead(addr) {
+    // Switchable 8KB CHR bank
+    const base = this.chrBank * 0x2000;
+    return this.cart.chr[base + addr];
+  }
+  
+  chrWrite(addr, val) {
+    // CHR ROM is typically read-only, but support CHR RAM if present
+    if (!this.cart.chrROM) {
+      const base = this.chrBank * 0x2000;
+      this.cart.chr[base + addr] = val;
+    }
+  }
+}
+ class Mapper4 extends Mapper {
+    constructor(cart) {
+        super(cart); 
+        this.cpu = null; 
+        this.ppu = null;
+        
+        // Bank selection and data
+        this.bankSelect = 0; 
+        this.bankData = new Uint8Array(8); 
+        this.prgMode = 0; 
+        this.chrMode = 0;
+        
+        // ===== IRQ State =====
+        this.irqLatch = 0;        // Reload value for counter
+        this.irqCounter = 0;      // Current counter value
+        this.irqEnable = false;   // IRQ enabled flag
+        this.irqReloadPending = false;  // Reload on next scanline clock
+        
+        // Bank mappings
+        this.prgBanks = new Uint8Array(4); 
+        this.chrBanks = new Uint8Array(8);
+        this.prgBanksTotal = this.cart.prg.length / 0x2000; 
+        this.lastBank = this.prgBanksTotal - 1;
+        
+        this.updatePrgMapping(); 
+        this.updateChrMapping();
+    }
+    
+    // ===== PPU Cycle Hook - Scanline Counter =====
+    ppuCycle() {
+        if (!this.ppu) return;
+        
+        // Only clock counter when rendering is enabled
+        const renderingEnabled = (this.ppu.mask & 0x18) !== 0; 
+        if (!renderingEnabled) return;
+        
+        const scanline = this.ppu.scanline; 
+        const cycle = this.ppu.cycle;
+        
+        // Clock the counter at cycle 260 of visible scanlines (0-239)
+        // This matches MMC3 behavior - counter clocks once per scanline
+        if (cycle === 260 && scanline >= 0 && scanline <= 239) { 
+            this.clockCounter(); 
+        }
+    }
+    
+    // ===== Scanline Counter Logic =====
+    clockCounter() {
+        // If reload is pending, reload the counter and clear the flag
+        if (this.irqReloadPending) { 
+            this.irqCounter = this.irqLatch; 
+            this.irqReloadPending = false; 
+            return; 
+        }
+        
+        // If counter is 0, reload it
+        if (this.irqCounter === 0) { 
+            this.irqCounter = this.irqLatch; 
+        } else { 
+            // Otherwise decrement
+            this.irqCounter--; 
+        }
+        
+        // ===== CRITICAL: Assert IRQ line when counter reaches 0 AND IRQ is enabled =====
+        // This is LEVEL-TRIGGERED. The line stays asserted until explicitly cleared.
+        if (this.irqCounter === 0 && this.irqEnable && this.cpu) { 
+            this.cpu.irqLine = true; 
+        }
+    }
+    
+    // ===== PRG ROM Access =====
+    prgRead(addr) {
+        if (addr >= 0x6000 && addr <= 0x7FFF) { 
+            return this.cart.sram[addr - 0x6000]; 
+        }
+        let bankIdx = (addr - 0x8000) >> 13; 
+        let bank = this.prgBanks[bankIdx];
+        return this.cart.prg[(bank * 0x2000) + (addr & 0x1FFF)];
+    }
+    
+    prgWrite(addr, val) {
+        if (addr >= 0x6000 && addr <= 0x7FFF) { 
+            this.cart.sram[addr - 0x6000] = val; 
+            return; 
+        }
+        this.writeRegister(addr, val);
+    }
+    
+    // ===== CHR ROM/RAM Access =====
+    chrRead(addr) {
+        let index = addr >> 10; 
+        let offset = addr & 0x3FF;
+        let bankIndex = this.chrMode === 0 ? index : (index < 4 ? index + 4 : index - 4);
+        let bank = this.chrBanks[bankIndex]; 
+        const total = this.cart.chr.length >> 10; 
+        if (total > 0) bank %= total;
+        return this.cart.chr[(bank * 1024) + offset];
+    }
+    
+    chrWrite(addr, val) {
+        if (this.cart.chrROM) return;
+        let index = addr >> 10; 
+        let offset = addr & 0x3FF;
+        let bankIndex = this.chrMode === 0 ? index : (index < 4 ? index + 4 : index - 4);
+        let bank = this.chrBanks[bankIndex]; 
+        const total = this.cart.chr.length >> 10; 
+        if (total > 0) bank %= total;
+        this.cart.chr[(bank * 1024) + offset] = val;
+    }
+    
+    // ===== Register Writes =====
+    writeRegister(addr, val) {
+        if (addr < 0x8000) return;
+        
+        // MMC3 uses bit 0 of address to determine even/odd register
+        if ((addr & 1) === 0) {
+            // EVEN addresses: $8000-$9FFE, $A000-$BFFE, $C000-$DFFE, $E000-$FFFE
+            if (addr < 0xA000) {
+                // $8000-$9FFE: Bank select
+                this.bankSelect = val; 
+                const p = (val >> 6) & 1;  // PRG ROM bank mode
+                const c = (val >> 7) & 1;  // CHR A12 inversion
+                if (this.prgMode !== p) { this.prgMode = p; this.updatePrgMapping(); }
+                if (this.chrMode !== c) { this.chrMode = c; this.updateChrMapping(); }
+            } else if (addr < 0xC000) { 
+                // $A000-$BFFE: Mirroring
+                if (this.ppu) this.ppu.mirror = (val & 1) ? 'horizontal' : 'vertical'; 
+            } else if (addr < 0xE000) { 
+                // $C000-$DFFE: IRQ latch
+                this.irqLatch = val; 
+            } else { 
+                // $E000-$FFFE: IRQ disable
+                // ===== CRITICAL: Disable IRQ and CLEAR the IRQ line =====
+                this.irqEnable = false; 
+                if (this.cpu) {
+                    this.cpu.irqLine = false;  // Clear the level-triggered IRQ line
+                }
+            }
+        } else {
+            // ODD addresses: $8001-$9FFF, $A001-$BFFF, $C001-$DFFF, $E001-$FFFF
+            if (addr < 0xA000) { 
+                // $8001-$9FFF: Bank data
+                this.bankData[this.bankSelect & 7] = val; 
+                // Update mappings when bank data changes
+                (this.bankSelect & 7) >= 6 ? this.updatePrgMapping() : this.updateChrMapping(); 
+            } else if (addr < 0xC000) { 
+                // $A001-$BFFF: PRG RAM protect (not implemented)
+            } else if (addr < 0xE000) { 
+                // $C001-$DFFF: IRQ reload
+                // ===== Set reload flag - counter will reload on NEXT clock =====
+                this.irqCounter = 0;  // Some implementations also clear counter
+                this.irqReloadPending = true; 
+            } else { 
+                // $E001-$FFFF: IRQ enable
+                // ===== CRITICAL: Enable IRQ =====
+                // Note: Enabling IRQ does NOT immediately assert the line.
+                // The line is only asserted when the counter reaches 0.
+                this.irqEnable = true; 
+                // Do NOT assert cpu.irqLine here - it only fires when counter hits 0
+            }
+        }
+    }
+    
+    // ===== Update PRG Bank Mapping =====
+    updatePrgMapping() {
+        // PRG mode determines which banks are mapped where
+        const b8 = this.prgMode === 0 ? this.bankData[6] : this.lastBank - 1; 
+        const bC = this.prgMode === 0 ? this.lastBank - 1 : this.bankData[6];
+        this.prgBanks[0] = b8;              // $8000-$9FFF
+        this.prgBanks[1] = this.bankData[7]; // $A000-$BFFF
+        this.prgBanks[2] = bC;              // $C000-$DFFF
+        this.prgBanks[3] = this.lastBank;   // $E000-$FFFF (always last bank)
+    }
+    
+    // ===== Update CHR Bank Mapping =====
+    updateChrMapping() {
+        const R = this.bankData;
+        // R0 and R1 are 2KB banks (ignore lowest bit for even alignment)
+        this.chrBanks[0] = R[0] & 0xFE; 
+        this.chrBanks[1] = R[0] | 1; 
+        this.chrBanks[2] = R[1] & 0xFE; 
+        this.chrBanks[3] = R[1] | 1;
+        // R2-R5 are 1KB banks
+        this.chrBanks[4] = R[2]; 
+        this.chrBanks[5] = R[3]; 
+        this.chrBanks[6] = R[4]; 
+        this.chrBanks[7] = R[5];
+    }
+}
+
+  class Mapper9 extends Mapper {
+  constructor(cart) {
+    super(cart);
+    // PRG ROM: 8KB banks
+    // $A000-$FFFF are fixed to the last three 8KB banks
+    this.numPrgBanks = Math.floor(cart.prg.length / 0x2000);
+    this.prgBankSelect = 0; // Selectable bank at $8000
+    
+    // CHR ROM: 4KB banks
+    // Two latches: one for low 4KB ($0000-$0FFF), one for high 4KB ($1000-$1FFF)
+    // 0 = $FD state, 1 = $FE state
+    this.latch0 = 0; // Latch for 0x0000
+    this.latch1 = 0; // Latch for 0x1000
+    
+    // Registers for CHR banks
+    // 0: Low/FD ($B000), 1: Low/FE ($C000)
+    // 2: High/FD ($D000), 3: High/FE ($E000)
+    this.chrBanks = new Uint8Array(4);
+    this.chrBanks.fill(0);
+  }
+
+  prgRead(addr) {
+    // $6000-$7FFF: PRG RAM (if present)
+    if (addr < 0x8000) return 0;
+
+    let bankIndex = 0;
+    const offset = addr & 0x1FFF;
+
+    if (addr < 0xA000) {
+      // $8000-$9FFF: Switchable 8KB bank
+      bankIndex = this.prgBankSelect;
+    } else if (addr < 0xC000) {
+      // $A000-$BFFF: Fixed to third last bank
+      bankIndex = this.numPrgBanks - 3;
+    } else if (addr < 0xE000) {
+      // $C000-$DFFF: Fixed to second last bank
+      bankIndex = this.numPrgBanks - 2;
+    } else {
+      // $E000-$FFFF: Fixed to last bank
+      bankIndex = this.numPrgBanks - 1;
+    }
+    
+    return this.cart.prg[(bankIndex * 0x2000 + offset) % this.cart.prg.length];
+  }
+
+  prgWrite(addr, val) {
+    // Registers are located at $A000-$FFFF
+    // The mask is effectively $F000 due to how MMC2 decodes
+    const reg = addr & 0xF000;
+    
+    switch (reg) {
+      case 0xA000:
+        // PRG ROM bank select ($8000-$9FFF)
+        this.prgBankSelect = val & 0x0F;
+        break;
+      case 0xB000:
+        // CHR ROM $FD/0 bank (Low 4KB, Latch=0)
+        this.chrBanks[0] = val & 0x1F;
+        break;
+      case 0xC000:
+        // CHR ROM $FE/0 bank (Low 4KB, Latch=1)
+        this.chrBanks[1] = val & 0x1F;
+        break;
+      case 0xD000:
+        // CHR ROM $FD/1 bank (High 4KB, Latch=0)
+        this.chrBanks[2] = val & 0x1F;
+        break;
+      case 0xE000:
+        // CHR ROM $FE/1 bank (High 4KB, Latch=1)
+        this.chrBanks[3] = val & 0x1F;
+        break;
+      case 0xF000:
+        // Mirroring: 0=Vertical, 1=Horizontal
+        if (this.ppu) {
+          this.ppu.mirror = (val & 1) ? 'horizontal' : 'vertical';
+        }
+        break;
+    }
+  }
+
+  chrRead(addr) {
+    // Determine which pattern table (Low $0000 or High $1000)
+    const bankSlot = (addr >> 12) & 1; 
+    
+    // Select latch state based on the bank slot
+    const latchState = bankSlot === 0 ? this.latch0 : this.latch1;
+    
+    // Select the bank index based on slot + state
+    // Slot 0 uses banks [0,1], Slot 1 uses banks [2,3]
+    const bankIndex = this.chrBanks[(bankSlot * 2) + latchState];
+    
+    // Calculate final address
+    const result = this.cart.chr[(bankIndex * 0x1000) + (addr & 0xFFF)];
+
+    // ===== LATCH UPDATE LOGIC =====
+    // This happens *after* determining the read data but affects *future* reads.
+    // We check specific "magic tiles" that trigger the latch.
+    
+    // Low Pattern Table ($0000-$0FFF) triggers
+    if (addr === 0x0FD8) this.latch0 = 0; // $FD latch
+    else if (addr === 0x0FE8) this.latch0 = 1; // $FE latch
+    
+    // High Pattern Table ($1000-$1FFF) triggers
+    else if (addr >= 0x1FD8 && addr <= 0x1FDF) this.latch1 = 0; // $FD latch
+    else if (addr >= 0x1FE8 && addr <= 0x1FEF) this.latch1 = 1; // $FE latch
+    
+    return result;
+  }
+
+  chrWrite(addr, val) {
+    // MMC2 usually uses CHR ROM, but if RAM, we allow write
+    if (!this.cart.chrROM) {
+       // Simple pass-through write (no banking logic typically needed for RAM on MMC2)
+       this.cart.chr[addr] = val;
+    }
+  }
+}
+
+  // ===== Cartridge & Bus =====
+  class Cartridge {
+    constructor(bytes) {
+      if (bytes[0] !== 0x4E || bytes[1] !== 0x45 || bytes[2] !== 0x53 || bytes[3] !== 0x1A) throw new Error('Invalid iNES ROM file');
+      const prgBanks = bytes[4], chrBanks = bytes[5], f6 = bytes[6], f7 = bytes[7];
+      this.mapper = (f7 & 0xF0) | (f6 >> 4); this.mirror = (f6 & 1) ? 'vertical' : 'horizontal'; if (f6 & 0x08) this.mirror = 'four';
+      const hasTrainer = !!(f6 & 0x04); let offset = 16 + (hasTrainer ? 512 : 0);
+      const prgSize = prgBanks * 16384; this.prg = bytes.slice(offset, offset + prgSize); offset += prgSize;
+      this.chrROM = chrBanks > 0;
+      if (this.chrROM) { const chrSize = chrBanks * 8192; this.chr = bytes.slice(offset, offset + chrSize); } else { this.chr = new Uint8Array(8192); }
+      this.chrRAM = !this.chrROM; this.sram = new Uint8Array(0x2000);
+    }
+  }
+  class Bus {
+    constructor(cpu, ppu, cart, input, apu){ this.cpu=cpu; this.ppu=ppu; this.cart=cart; this.input=input; this.apu=apu; this.ram=new Uint8Array(0x800); }
+    cpuRead(addr){ addr&=0xFFFF;
+      if(addr<0x2000){return this.ram[addr&0x7FF];}
+      if(addr<0x4000){return this.ppu.read(0x2000 + (addr&7));}
+      if(addr===0x4015){return this.apu.read(addr);}
+      if(addr===0x4016){return this.input.read1();}
+      if(addr===0x4017){return this.input.read2();}
+      if(addr>=0x8000){return this.ppu.mapper.prgRead(addr);} 
+      if(addr>=0x6000){return this.ppu.cart.sram[addr-0x6000];}
+      return 0;
+    }
+    cpuWrite(addr,val){ addr&=0xFFFF; val&=0xFF; if(addr<0x2000){this.ram[addr&0x7FF]=val; return;}
+      if(addr<0x4000){this.ppu.write(0x2000 + (addr&7), val); return;}
+      if(addr===0x4014){ const page = val<<8; const buf = new Uint8Array(256); for(let i=0;i<256;i++) buf[i]=this.cpuRead(page+i); this.ppu.doDMA(buf); this.cpu.stall += 513 + (this.cpu.cycles%2===1?1:0); return;}
+      if(addr===0x4016){this.input.write(val); return;}
+      if(addr>=0x4000 && addr<=0x4017){ this.apu.write(addr,val); return; }
+      if(addr>=0x8000){this.ppu.mapper.prgWrite(addr,val); return;}
+      if(addr>=0x6000){this.ppu.cart.sram[addr-0x6000]=val; return;}
+    }
+  }
+
+  class PPU {
+    constructor() {
+      this.v = 0; this.t = 0; this.x = 0; this.w = 0; this.ctrl = 0; this.mask = 0; this.status = 0; this.oamaddr = 0; this.buffered = 0; this.openBus = 0;
+      this.oam = new Uint8Array(256); this.secOAM = new Uint8Array(32); this.spriteCount = 0; this.spriteZeroInLine = false; this.spriteZeroHit = false;
+      this.cycle = 0; this.scanline = 261; this.frame = 0; this.nmi = false; this.frameComplete = false;
+      this.cart = null; this.mapper = null; this.canvas = null; this.ctx = null; this.output = null;
+      this.vram = new Uint8Array(0x800); this.palette = new Uint8Array(32); this.bgLatch = { lo: 0, hi: 0, pal: 0 }; this.oddFrame = false;
+      this.bgShiftLo = 0; this.bgShiftHi = 0; this.bgAttrShiftLo = 0; this.bgAttrShiftHi = 0; this.bgNextTile = 0; this.bgNextAttr = 0;
+    }
+    attachCanvas(canvas) { this.canvas = canvas; this.ctx = canvas.getContext("2d", { alpha: false, willReadFrequently: true }); this.output = this.ctx.createImageData(256, 240); }
+    connectCart(cart) { 
+  this.cart = cart;
+  
+  // Mapper registry: Index matches iNES mapper ID
+  const mappers = [
+    Mapper0, Mapper1, Mapper2, Mapper3, Mapper4, 
+    null, null, null, null, Mapper9 // Index 9 = Mapper9
+  ];
+  
+  const MapperClass = mappers[cart.mapper]; 
+  
+  // Fallback to Mapper0 if not found
+  this.mapper = MapperClass ? new MapperClass(cart) : new Mapper0(cart); 
+  
+  cart.mapperObj = this.mapper;
+  
+  // Set PPU references for mappers that need it (MMC1, MMC4, MMC2/Mapper9)
+  if(this.mapper && (this.mapper instanceof Mapper1 || this.mapper instanceof Mapper4 || this.mapper instanceof Mapper9)) { 
+    this.mapper.ppu = this;
+  }
+  
+  this.mirror = cart.mirror;
+    }
+    reset() { this.v = this.t = this.x = this.w = 0; this.ctrl = this.mask = this.status = this.oamaddr = 0; this.cycle = 0; this.scanline = 261; this.nmi = false; this.frame = 0; this.oddFrame = false; this.bgShiftLo = 0; this.bgShiftHi = 0; this.bgAttrShiftLo = 0; this.bgAttrShiftHi = 0; }
+    read(addr) {
+      switch (addr) {
+        case 0x2002: { const res = (this.status & 0xE0) | (this.buffered & 0x1F); this.openBus = res; this.status &= ~0x80; this.w = 0; this.nmi = false; return res; }
+        case 0x2004: return this.oam[this.oamaddr];
+        case 0x2007: { let value = this.ppuRead(this.v); if (this.v < 0x3F00) { const temp = this.buffered; this.buffered = value; value = temp; } else { this.buffered = this.ppuRead(this.v - 0x1000); } this.v += (this.ctrl & 0x04) ? 32 : 1; this.v &= 0x7FFF; this.openBus = value; return value; }
+        default: return this.openBus;
+      }
+    }
+    write(addr, val) {
+      switch (addr) {
+        case 0x2000:
+          const oldCtrl = this.ctrl; this.ctrl = val; this.t = (this.t & 0xf3ff) | ((val & 0x03) << 10);
+          const nmiEnableWasOff = (oldCtrl & 0x80) === 0; const nmiEnableNowOn = (val & 0x80) !== 0; const vblankFlagSet = (this.status & 0x80) !== 0;
+          if (nmiEnableWasOff && nmiEnableNowOn && vblankFlagSet) { this.nmi = true; } break;
+        case 0x2001: this.mask = val; break;
+        case 0x2003: this.oamaddr = val; break;
+        case 0x2004: this.oam[this.oamaddr++] = val; break;
+        case 0x2005: if (this.w === 0) { this.x = val & 0x07; this.t = (this.t & 0x7fe0) | ((val & 0xf8) >> 3); this.w = 1; } else { this.t = (this.t & 0x0c1f) | ((val & 0x07) << 12) | ((val & 0xf8) << 2); this.w = 0; } break;
+        case 0x2006: if (this.w === 0) { this.t = (this.t & 0x00ff) | ((val & 0x3f) << 8); this.w = 1; } else { this.t = (this.t & 0x7f00) | val; this.v = this.t; this.w = 0; } break;
+        case 0x2007: this.ppuWrite(this.v, val); this.v += (this.ctrl & 0x04) ? 32 : 1; this.v &= 0x7fff; break;
+      }
+      this.openBus = val;
+    }
+    doDMA(buf) { for (let i = 0; i < 256; i++) this.oam[(this.oamaddr + i) & 0xff] = buf[i]; }
+    ntIndex(addr) { 
+      const a = (addr - 0x2000) & 0x0fff; 
+      const nt = (a >> 10) & 3; 
+      const off = a & 0x03ff; 
+      
+      // Always use the current mirror value (updated dynamically by mapper)
+      const mirror = this.mirror; 
+      
+      if (mirror === "vertical") return ((nt & 1) * 0x400) + off; 
+      if (mirror === "horizontal") return (((nt >> 1) & 1) * 0x400) + off; 
+      if (mirror === "single0" || mirror === "singlescreen" || mirror === "single-screen-lower") return off; 
+      if (mirror === "single1" || mirror === "single-screen-upper") return off; // Both single screens map to same area
+      if (mirror === "four" || mirror === "fourscreen") return a & 0x7FF; 
+      // Default to horizontal for unknown modes
+      return (((nt >> 1) & 1) * 0x400) + off; 
+    }
+    ppuRead(addr) { addr &= 0x3fff; if (addr < 0x2000) return this.mapper.chrRead(addr); if (addr < 0x3f00) return this.vram[this.ntIndex(addr)]; let palAddr = addr & 0x1f; if ((palAddr & 3) === 0) palAddr &= 0x0F; return this.palette[palAddr]; }
+    ppuWrite(addr, val) { addr &= 0x3fff; val &= 0xff; if (addr < 0x2000) { this.mapper.chrWrite(addr, val); return; } if (addr < 0x3f00) { this.vram[this.ntIndex(addr)] = val; return; } let palAddr = addr & 0x1f; if ((palAddr & 3) === 0) palAddr &= 0x0F; this.palette[palAddr] = val; }
+    incCoarseX() { if ((this.v & 0x001f) === 31) { this.v &= ~0x001f; this.v ^= 0x0400; } else { this.v++; } }
+    incY() { if ((this.v & 0x7000) !== 0x7000) { this.v += 0x1000; } else { this.v &= ~0x7000; let y = (this.v & 0x03e0) >> 5; if (y === 29) { y = 0; this.v ^= 0x0800; } else if (y === 31) { y = 0; } else { y++; } this.v = (this.v & ~0x03e0) | (y << 5); } }
+    copyX() { this.v = (this.v & ~0x041f) | (this.t & 0x041f); }
+    copyY() { this.v = (this.v & ~0x7be0) | (this.t & 0x7be0); }
+    bgFetch() { const nt = 0x2000 | (this.v & 0x0fff); const at = 0x23c0 | (this.v & 0x0c00) | ((this.v >> 4) & 0x38) | ((this.v >> 2) & 0x07); const fineY = (this.v >> 12) & 7; const tile = this.ppuRead(nt); const attr = this.ppuRead(at); const coarseX = this.v & 0x1F; const coarseY = (this.v >> 5) & 0x1F; const shift = ((coarseY & 2) << 1) | (coarseX & 2); const pal = (attr >> shift) & 3; const base = (this.ctrl & 0x10) ? 0x1000 : 0x0000; const addr = base + tile * 16 + fineY; const lo = this.ppuRead(addr); const hi = this.ppuRead(addr + 8); return { lo, hi, pal }; }
+    reloadShifters() { this.bgShiftLo = (this.bgShiftLo & 0xFF00) | this.bgLatch.lo; this.bgShiftHi = (this.bgShiftHi & 0xFF00) | this.bgLatch.hi; const attrLo = (this.bgLatch.pal & 1) ? 0xFF : 0x00; const attrHi = (this.bgLatch.pal & 2) ? 0xFF : 0x00; this.bgAttrShiftLo = (this.bgAttrShiftLo & 0xFF00) | attrLo; this.bgAttrShiftHi = (this.bgAttrShiftHi & 0xFF00) | attrHi; }
+    evalSprites() { const y = this.scanline; this.spriteCount = 0; this.spriteZeroInLine = false; for (let i = 0; i < 64; i++) { const o = i * 4; const sy = this.oam[o]; const tile = this.oam[o + 1]; const attr = this.oam[o + 2]; const sx = this.oam[o + 3]; const h = (this.ctrl & 0x20) ? 16 : 8; const row = y - sy; if (row >= 0 && row < h && this.spriteCount < 8) { if (i === 0) this.spriteZeroInLine = true; this.secOAM[this.spriteCount * 4 + 0] = sy; this.secOAM[this.spriteCount * 4 + 1] = tile; this.secOAM[this.spriteCount * 4 + 2] = attr; this.secOAM[this.spriteCount * 4 + 3] = sx; this.spriteCount++; if (this.spriteCount === 8) { this.status |= 0x20; break; } } } }
+    renderPixel(x, y) {
+      const idx = (y * 256 + x) * 4; const img = this.output.data; let bgPx = 0, bgPal = 0; let spriteOpaque = false, spritePriority = 0, spritePx = 0, spritePal = 0; let sprite0 = false;
+      if (this.mask & 0x08) { const bitMux = 15 - this.x; const p0 = (this.bgShiftLo >> bitMux) & 1; const p1 = (this.bgShiftHi >> bitMux) & 1; bgPx = (p1 << 1) | p0; const a0 = (this.bgAttrShiftLo >> bitMux) & 1; const a1 = (this.bgAttrShiftHi >> bitMux) & 1; bgPal = (a1 << 1) | a0; }
+      if (this.mask & 0x10) { for (let i = 0; i < this.spriteCount; i++) { const o = i * 4; const sy = this.secOAM[o]; const tile = this.secOAM[o + 1]; const attr = this.secOAM[o + 2]; const sx = this.secOAM[o + 3]; if (x < sx || x >= sx + 8) continue; const h = (this.ctrl & 0x20) ? 16 : 8; const row = y - sy; if (row < 0 || row >= h) continue; if (i === 0 && this.spriteZeroInLine) sprite0 = true; const flipV = (attr >> 7) & 1; const flipH = (attr >> 6) & 1; spritePriority = (attr >> 5) & 1; const paletteIdx = (attr & 3); let fineY = flipV ? (h - 1 - row) : row; let tileNum = tile; let base = 0; if (h === 16) { base = (tile & 1) ? 0x1000 : 0x0000; tileNum = tile & 0xFE; if (fineY >= 8) { tileNum++; fineY -= 8; } } else { base = (this.ctrl & 0x08) ? 0x1000 : 0x0000; } const addr = base + tileNum * 16 + fineY; const lo = this.ppuRead(addr); const hi = this.ppuRead(addr + 8); const bit = flipH ? (x - sx) : (7 - (x - sx)); const p0 = (lo >> bit) & 1; const p1 = (hi >> bit) & 1; spritePx = (p1 << 1) | p0; if (spritePx !== 0) { spriteOpaque = true; spritePal = paletteIdx; break; } } }
+      if (sprite0 && spriteOpaque && bgPx !== 0) { if (x < 255 && x >= 8) { const bgOn = (this.mask & 0x08) !== 0; const sprOn = (this.mask & 0x10) !== 0; if (bgOn && sprOn) this.status |= 0x40; } else if (x < 255) { const leftBgOn = (this.mask & 0x02) !== 0; const leftSprOn = (this.mask & 0x04) !== 0; if ((this.mask & 0x08) && (this.mask & 0x10) && leftBgOn && leftSprOn) { this.status |= 0x40; } } }
+      let paletteIndex = 0; const bgOpaque = bgPx !== 0; const sprOpaque = spriteOpaque && spritePx !== 0;
+      if (!bgOpaque && !sprOpaque) { paletteIndex = 0; } else if (bgOpaque && !sprOpaque) { paletteIndex = (bgPal << 2) | bgPx; } else if (!bgOpaque && sprOpaque) { paletteIndex = 0x10 | (spritePal << 2) | spritePx; } else { if (spritePriority === 0) { paletteIndex = 0x10 | (spritePal << 2) | spritePx; } else { paletteIndex = (bgPal << 2) | bgPx; } }
+      if (x < 8) { if (!(this.mask & 0x02) && bgOpaque) { if (!sprOpaque) paletteIndex = 0; else if (spritePriority === 0) paletteIndex = 0x10 | (spritePal << 2) | spritePx; else paletteIndex = 0; } if (!(this.mask & 0x04) && sprOpaque) { if (!bgOpaque) paletteIndex = 0; else paletteIndex = (bgPal << 2) | bgPx; } if (!(this.mask & 0x02) && !(this.mask & 0x04)) paletteIndex = 0; }
+      const color = this.ppuRead(0x3F00 + (paletteIndex & 0x1F)); const rgb = NTSC_PALETTE[color & 0x3F]; img[idx] = rgb[0]; img[idx + 1] = rgb[1]; img[idx + 2] = rgb[2]; img[idx + 3] = 255;
+    }
+    step() {
+      if(this.mapper && this.mapper.ppuCycle) this.mapper.ppuCycle();
+      const renderingEnabled = (this.mask & 0x18) !== 0;
+      if (this.scanline === 261 && this.cycle === 339 && renderingEnabled && this.oddFrame) { this.cycle = 0; this.scanline = 0; this.frame++; this.oddFrame = false; return; }
+      if (this.scanline === 261) {
+        if (this.cycle === 1) { this.status &= ~(0x80 | 0x40 | 0x20); this.nmi = false; }
+        if (this.cycle >= 280 && this.cycle <= 304 && renderingEnabled) this.copyY();
+        if (this.cycle >= 321 && this.cycle <= 336 && renderingEnabled) { this.bgShiftLo <<= 1; this.bgShiftHi <<= 1; this.bgAttrShiftLo <<= 1; this.bgAttrShiftHi <<= 1; const cycleInTile = (this.cycle - 1) % 8; if (cycleInTile === 1) this.bgLatch = this.bgFetch(); if (cycleInTile === 0 && this.cycle > 321) this.reloadShifters(); if (cycleInTile === 7) this.incCoarseX(); }
+      }
+      if (this.scanline >= 0 && this.scanline < 240) {
+        if (this.cycle === 1 && renderingEnabled) this.evalSprites();
+        if (this.cycle >= 1 && this.cycle <= 256) {
+          if (renderingEnabled) { this.bgShiftLo <<= 1; this.bgShiftHi <<= 1; this.bgAttrShiftLo <<= 1; this.bgAttrShiftHi <<= 1; }
+          const cycleInTile = (this.cycle - 1) % 8; if (cycleInTile === 0 && renderingEnabled) this.reloadShifters(); if (cycleInTile === 1 && renderingEnabled) this.bgLatch = this.bgFetch();
+          this.renderPixel(this.cycle - 1, this.scanline); if (cycleInTile === 7 && renderingEnabled) this.incCoarseX();
+        }
+        if (this.cycle === 256 && renderingEnabled) this.incY(); if (this.cycle === 257 && renderingEnabled) this.copyX();
+        if (this.cycle >= 321 && this.cycle <= 336 && renderingEnabled) { this.bgShiftLo <<= 1; this.bgShiftHi <<= 1; this.bgAttrShiftLo <<= 1; this.bgAttrShiftHi <<= 1; const cycleInTile = (this.cycle - 1) % 8; if (cycleInTile === 0 && this.cycle > 321) this.reloadShifters(); if (cycleInTile === 1) this.bgLatch = this.bgFetch(); if (cycleInTile === 7) this.incCoarseX(); }
+      }
+      if (this.scanline === 241 && this.cycle === 1) { this.status |= 0x80; if (this.ctrl & 0x80) { this.nmi = true; } this.ctx.putImageData(this.output, 0, 0); this.frameComplete = true; }
+      this.cycle++; if (this.cycle > 340) { this.cycle = 0; this.scanline++; if (this.scanline > 261) { this.scanline = 0; this.frame++; this.oddFrame = !this.oddFrame; } }
+    }
+  }
+  const NTSC_PALETTE = [
+    [102,102,102], [0,42,136], [20,18,167], [59,0,164], [92,0,126], [110,0,64], [108,6,0], [88,20,0], [62,39,0], [15,58,0], [0,65,0], [0,60,0], [0,50,60], [0,0,0], [0,0,0], [0,0,0],
+    [173,173,173], [21,95,217], [66,64,255], [117,39,254], [160,26,204], [183,30,123], [181,49,32], [156,66,0], [121,87,0], [65,110,0], [21,121,0], [0,117,38], [0,105,130], [0,0,0], [0,0,0], [0,0,0],
+    [255,255,255], [102,176,255], [146,144,255], [198,118,255], [243,106,255], [254,110,204], [254,129,112], [234,148,0], [200,168,0], [144,192,0], [99,203,0], [75,198,89], [77,188,180], [79,79,79], [0,0,0], [0,0,0],
+    [255,255,255], [192,223,255], [211,210,255], [232,200,255], [251,194,255], [254,196,234], [254,204,197], [247,212,148], [232,221,148], [210,230,148], [192,235,148], [182,233,184], [183,229,222], [184,184,184], [0,0,0], [0,0,0]
+];
+  
+// ===== CPU =====
+class CPU6502{
+    constructor(bus){ this.bus=bus; this.a=0; this.x=0; this.y=0; this.sp=0xFD; this.p=0x24; this.pc=0; this.cycles=0; this.stall=0; this.resetVector=0x8000; this.irqLine=false; }
+    getC(){return this.p&1;} setC(v){this.p = (this.p & ~1) | (v&1);} getZ(){return (this.p>>1)&1;} setZ(v){this.p = (this.p & ~2) | ((v?1:0)<<1);} getI(){return (this.p>>2)&1;} setI(v){this.p = (this.p & ~4) | ((v?1:0)<<2);} getD(){return (this.p>>3)&1;} setD(v){this.p = (this.p & ~8) | ((v?1:0)<<3);} getB(){return (this.p>>4)&1;} setB(v){this.p = (this.p & ~16)|((v?1:0)<<4);} getU(){return (this.p>>5)&1;} setU(v){this.p = (this.p & ~32)|((v?1:0)<<5);} getV(){return (this.p>>6)&1;} setV(v){this.p = (this.p & ~64)|((v?1:0)<<6);} getN(){return (this.p>>7)&1;} setN(v){this.p = (this.p & ~128)|((v?1:0)<<7);} 
+    read(a){return this.bus.cpuRead(a);} write(a,v){this.bus.cpuWrite(a,v);} 
+    push(v){this.write(0x100+this.sp, v); this.sp=u8(this.sp-1);} pop(){this.sp=u8(this.sp+1); return this.read(0x100+this.sp);} 
+    reset(){ this.a=0; this.x=0; this.y=0; this.sp=0xFD; this.p=0x24; const lo=this.read(0xFFFC), hi=this.read(0xFFFD); this.pc=lo | (hi<<8); this.cycles=7; this.stall=0; }
+    
+    // ===== FIXED NMI: Push status BEFORE modifying I flag =====
+    nmi(){ 
+      // Push PC high, PC low
+      this.push((this.pc>>8)&0xFF); 
+      this.push(this.pc&0xFF); 
+      // Push status with B=0, U=1 (not BRK, unused bit always set)
+      const statusToPush = (this.p & 0xEF) | 0x20;  // Clear B flag (bit 4), set U (bit 5)
+      this.push(statusToPush);
+      // NOW set I flag (after push)
+      this.setI(1);
+      // Read vector
+      const lo=this.read(0xFFFA), hi=this.read(0xFFFB); 
+      this.pc=lo|(hi<<8); 
+      this.cycles+=7; 
+    }
+    
+    // ===== FIXED IRQ: Level-triggered, correct flag order =====
+    irq(){ 
+      // IRQ only fires when I flag is CLEAR (interrupts enabled)
+      if(this.getI()) return; 
+      
+      // Push PC high, PC low
+      this.push((this.pc>>8)&0xFF); 
+      this.push(this.pc&0xFF); 
+      
+      // Push status with B=0, U=1 (not BRK, unused bit always set)
+      const statusToPush = (this.p & 0xEF) | 0x20;  // Clear B flag (bit 4), set U (bit 5)
+      this.push(statusToPush);
+      
+      // NOW set I flag (after push)
+      this.setI(1);
+      
+      // Read IRQ vector
+      const lo=this.read(0xFFFE), hi=this.read(0xFFFF); 
+      this.pc=lo|(hi<<8); 
+      this.cycles+=7; 
+      
+      // ===== CRITICAL: Do NOT clear irqLine here! =====
+      // IRQ is LEVEL-triggered. The line stays asserted until the IRQ source (mapper, APU)
+      // explicitly clears it. If we clear it here, the IRQ becomes edge-triggered (wrong).
+      // The mapper/APU must deassert the line when appropriate.
+    }
+    
+    step(){ 
+      // Handle CPU stall cycles (e.g., from DMA)
+      if(this.stall>0){ this.stall--; this.cycles++; return 1; }
+      
+      // ===== CRITICAL: Check IRQ at instruction boundary (level-triggered) =====
+      // IRQ is sampled BETWEEN instructions, not during them.
+      // If irqLine is asserted AND I flag is clear, service the interrupt.
+      // The IRQ line remains asserted until the source clears it.
+      if(this.irqLine && !this.getI()){ 
+        this.irq(); 
+        // NOTE: irqLine is NOT cleared here - it's level-triggered
+        // The interrupt source (mapper, APU) must clear it
+      }
+      
+      // Fetch and execute instruction
+      const op=this.read(this.pc++); const e = OPCODES[op]; if(!e){ return 2; }
+      const {mode, ins, cyc} = e; this.addrMode=mode; this.pageCross=0; const addr = this.fetchAddr(mode);
+      const cyclesBefore=this.cycles; this.execute(ins, addr); let c = cyc + this.pageCross; this.cycles += c; return this.cycles - cyclesBefore;
+    }
+    
+    fetchAddr(mode){
+      const zp=()=>this.read(this.pc++); const zpX=()=>u8(zp()+this.x); const zpY=()=>u8(zp()+this.y); const imm=()=>this.pc++;
+      const abs=()=>{const lo=this.read(this.pc++), hi=this.read(this.pc++); return lo|(hi<<8)};
+      const absX=()=>{const a=abs(); const res=u16(a+this.x); if((a^res)&0xFF00) this.pageCross=1; return res;}
+      const absY=()=>{const a=abs(); const res=u16(a+this.y); if((a^res)&0xFF00) this.pageCross=1; return res;}
+      const indX=()=>{const t = u8(this.read(this.pc++) + this.x); const lo=this.read(t), hi=this.read(u8(t+1)); return lo|(hi<<8)};
+      const indY=()=>{const t = this.read(this.pc++); const lo=this.read(t), hi=this.read(u8(t+1)); const a=lo|(hi<<8); const res=u16(a+this.y); if((a^res)&0xFF00) this.pageCross=1; return res;}
+      switch(mode){
+        case 'IMP': return null; case 'IMM': return imm(); case 'ZP0': return zp(); case 'ZPX': return zpX(); case 'ZPY': return zpY();
+        case 'ABS': return abs(); case 'ABX': return absX(); case 'ABY': return absY(); case 'IZX': return indX(); case 'IZY': return indY();
+        case 'IND': {const ptr=abs(); const lo=this.read(ptr); const hi=this.read((ptr&0xFF00)|((ptr+1)&0xFF)); return lo|(hi<<8);} 
+        case 'REL': {const off=u8(this.read(this.pc++)); return off<0x80? this.pc+off : this.pc+off-0x100;}
+      }
+    }
+    setZN(v){ this.setZ((v&0xFF)===0); this.setN(v&0x80); }
+    execute(ins, addr){
+      const rd = a=>this.read(a); const wr=(a,v)=>this.write(a,u8(v));
+      const ADC=v=>{const t=this.a+v+this.getC(); this.setC(t>0xFF); this.setV((~(this.a^v) & (this.a^t) & 0x80)); this.a=u8(t); this.setZN(this.a);}
+      const SBC=v=>{ADC(v^0xFF)}; const CMP=(r,v)=>{const t=r-v; this.setC(r>=v); this.setZN(u8(t));}
+      const BIT=v=>{this.setZ((this.a & v)===0); this.setV(v&0x40); this.setN(v&0x80);}
+      switch(ins){
+        case 'BRK': this.pc++; this.push((this.pc>>8)&0xFF); this.push(this.pc&0xFF); this.setB(1); this.push(this.p); this.setI(1); this.pc = this.read(0xFFFE) | (this.read(0xFFFF)<<8); break;
+        case 'NOP': break; case 'LDA': this.a=rd(addr); this.setZN(this.a); break;
+        case 'LDX': this.x=rd(addr); this.setZN(this.x); break; case 'LDY': this.y=rd(addr); this.setZN(this.y); break;
+        case 'STA': wr(addr,this.a); break; case 'STX': wr(addr,this.x); break; case 'STY': wr(addr,this.y); break;
+        case 'TAX': this.x=this.a; this.setZN(this.x); break; case 'TAY': this.y=this.a; this.setZN(this.y); break;
+        case 'TXA': this.a=this.x; this.setZN(this.a); break; case 'TYA': this.a=this.y; this.setZN(this.a); break;
+        case 'TSX': this.x=this.sp; this.setZN(this.x); break; case 'TXS': this.sp=this.x; break;
+        case 'PHA': this.push(this.a); break; case 'PHP': this.push(this.p|0x10); break;
+        case 'PLA': this.a=this.pop(); this.setZN(this.a); break; case 'PLP': this.p=(this.pop()&0xEF)|0x20; break;
+        case 'AND': this.a &= rd(addr); this.setZN(this.a); break; case 'ORA': this.a |= rd(addr); this.setZN(this.a); break;
+        case 'EOR': this.a ^= rd(addr); this.setZN(this.a); break;
+        case 'ADC': ADC(rd(addr)); break; case 'SBC': SBC(rd(addr)); break;
+        case 'CMP': CMP(this.a, rd(addr)); break; case 'CPX': CMP(this.x, rd(addr)); break; case 'CPY': CMP(this.y, rd(addr)); break;
+        case 'INC': {const v=u8(rd(addr)+1); wr(addr,v); this.setZN(v); } break; case 'INX': this.x=u8(this.x+1); this.setZN(this.x); break; case 'INY': this.y=u8(this.y+1); this.setZN(this.y); break;
+        case 'DEC': {const v=u8(rd(addr)-1); wr(addr,v); this.setZN(v); } break; case 'DEX': this.x=u8(this.x-1); this.setZN(this.x); break; case 'DEY': this.y=u8(this.y-1); this.setZN(this.y); break;
+        case 'ASL': if(this.addrMode==='IMP'){ this.setC(this.a>>7); this.a=u8(this.a<<1); this.setZN(this.a);} else { const v=rd(addr); this.setC(v>>7); const r=u8(v<<1); wr(addr,r); this.setZN(r);} break;
+        case 'LSR': if(this.addrMode==='IMP'){ this.setC(this.a&1); this.a=u8(this.a>>>1); this.setZN(this.a);} else { const v=rd(addr); this.setC(v&1); const r=u8(v>>>1); wr(addr,r); this.setZN(r);} break;
+        case 'ROL': if(this.addrMode==='IMP'){ const c=this.getC(); this.setC(this.a>>7); this.a=u8((this.a<<1)|c); this.setZN(this.a);} else { const v=rd(addr); const c=this.getC(); this.setC(v>>7); const r=u8((v<<1)|c); wr(addr,r); this.setZN(r);} break;
+        case 'ROR': if(this.addrMode==='IMP'){ const c=this.getC(); this.setC(this.a&1); this.a=u8((this.a>>>1)|(c<<7)); this.setZN(this.a);} else { const v=rd(addr); const c=this.getC(); this.setC(v&1); const r=u8((v>>>1)|(c<<7)); wr(addr,r); this.setZN(r);} break;
+        case 'BIT': BIT(rd(addr)); break; case 'JMP': this.pc = addr; break;
+        case 'JSR': {const t=u16(this.pc-1); this.push((t>>8)&0xFF); this.push(t&0xFF); this.pc=addr;} break;
+        case 'RTS': {const lo=this.pop(), hi=this.pop(); this.pc = ((hi<<8)|lo) + 1;} break;
+        case 'RTI': {this.p=(this.pop()&0xEF)|0x20; const lo=this.pop(), hi=this.pop(); this.pc=(hi<<8)|lo;} break;
+        case 'BCC': {const cond=!this.getC(); if(cond){ this.cycles++; if((this.pc&0xFF00)!=(addr&0xFF00)) this.cycles++; this.pc=addr; }} break;
+        case 'BCS': {const cond=this.getC(); if(cond){ this.cycles++; if((this.pc&0xFF00)!=(addr&0xFF00)) this.cycles++; this.pc=addr; }} break;
+        case 'BEQ': {const cond=this.getZ(); if(cond){ this.cycles++; if((this.pc&0xFF00)!=(addr&0xFF00)) this.cycles++; this.pc=addr; }} break;
+        case 'BMI': {const cond=this.getN(); if(cond){ this.cycles++; if((this.pc&0xFF00)!=(addr&0xFF00)) this.cycles++; this.pc=addr; }} break;
+        case 'BNE': {const cond=!this.getZ(); if(cond){ this.cycles++; if((this.pc&0xFF00)!=(addr&0xFF00)) this.cycles++; this.pc=addr; }} break;
+        case 'BPL': {const cond=!this.getN(); if(cond){ this.cycles++; if((this.pc&0xFF00)!=(addr&0xFF00)) this.cycles++; this.pc=addr; }} break;
+        case 'BVC': {const cond=!this.getV(); if(cond){ this.cycles++; if((this.pc&0xFF00)!=(addr&0xFF00)) this.cycles++; this.pc=addr; }} break;
+        case 'BVS': {const cond=this.getV(); if(cond){ this.cycles++; if((this.pc&0xFF00)!=(addr&0xFF00)) this.cycles++; this.pc=addr; }} break;
+        case 'CLC': this.setC(0); break; case 'SEC': this.setC(1); break; case 'CLI': this.setI(0); break; case 'SEI': this.setI(1); break; case 'CLV': this.setV(0); break; case 'CLD': this.setD(0); break; case 'SED': this.setD(1); break;
+      }
+    }
+  }
+  // ===== Helper Functions =====
+  
+  const O = (mode, ins, cyc) => ({mode, ins, cyc});
+  const OPCODES = new Array(256);
+  const fill = (list)=>list.forEach(([op,mode,ins,cyc])=>OPCODES[op]=O(mode,ins,cyc));
+  fill([
+    [0x00,'IMP','BRK',7],[0xEA,'IMP','NOP',2],
+    [0xA9,'IMM','LDA',2],[0xA5,'ZP0','LDA',3],[0xB5,'ZPX','LDA',4],[0xAD,'ABS','LDA',4],[0xBD,'ABX','LDA',4],[0xB9,'ABY','LDA',4],[0xA1,'IZX','LDA',6],[0xB1,'IZY','LDA',5],
+    [0xA2,'IMM','LDX',2],[0xA6,'ZP0','LDX',3],[0xB6,'ZPY','LDX',4],[0xAE,'ABS','LDX',4],[0xBE,'ABY','LDX',4],
+    [0xA0,'IMM','LDY',2],[0xA4,'ZP0','LDY',3],[0xB4,'ZPX','LDY',4],[0xAC,'ABS','LDY',4],[0xBC,'ABX','LDY',4],
+    [0x85,'ZP0','STA',3],[0x95,'ZPX','STA',4],[0x8D,'ABS','STA',4],[0x9D,'ABX','STA',5],[0x99,'ABY','STA',5],[0x81,'IZX','STA',6],[0x91,'IZY','STA',6],
+    [0x86,'ZP0','STX',3],[0x96,'ZPY','STX',4],[0x8E,'ABS','STX',4],
+    [0x84,'ZP0','STY',3],[0x94,'ZPX','STY',4],[0x8C,'ABS','STY',4],
+    [0xAA,'IMP','TAX',2],[0xA8,'IMP','TAY',2],[0x8A,'IMP','TXA',2],[0x98,'IMP','TYA',2],
+    [0xBA,'IMP','TSX',2],[0x9A,'IMP','TXS',2],
+    [0x48,'IMP','PHA',3],[0x08,'IMP','PHP',3],[0x68,'IMP','PLA',4],[0x28,'IMP','PLP',4],
+    [0x29,'IMM','AND',2],[0x25,'ZP0','AND',3],[0x35,'ZPX','AND',4],[0x2D,'ABS','AND',4],[0x3D,'ABX','AND',4],[0x39,'ABY','AND',4],[0x21,'IZX','AND',6],[0x31,'IZY','AND',5],
+    [0x09,'IMM','ORA',2],[0x05,'ZP0','ORA',3],[0x15,'ZPX','ORA',4],[0x0D,'ABS','ORA',4],[0x1D,'ABX','ORA',4],[0x19,'ABY','ORA',4],[0x01,'IZX','ORA',6],[0x11,'IZY','ORA',5],
+    [0x49,'IMM','EOR',2],[0x45,'ZP0','EOR',3],[0x55,'ZPX','EOR',4],[0x4D,'ABS','EOR',4],[0x5D,'ABX','EOR',4],[0x59,'ABY','EOR',4],[0x41,'IZX','EOR',6],[0x51,'IZY','EOR',5],
+    [0x69,'IMM','ADC',2],[0x65,'ZP0','ADC',3],[0x75,'ZPX','ADC',4],[0x6D,'ABS','ADC',4],[0x7D,'ABX','ADC',4],[0x79,'ABY','ADC',4],[0x61,'IZX','ADC',6],[0x71,'IZY','ADC',5],
+    [0xE9,'IMM','SBC',2],[0xE5,'ZP0','SBC',3],[0xF5,'ZPX','SBC',4],[0xED,'ABS','SBC',4],[0xFD,'ABX','SBC',4],[0xF9,'ABY','SBC',4],[0xE1,'IZX','SBC',6],[0xF1,'IZY','SBC',5],
+    [0xC9,'IMM','CMP',2],[0xC5,'ZP0','CMP',3],[0xD5,'ZPX','CMP',4],[0xCD,'ABS','CMP',4],[0xDD,'ABX','CMP',4],[0xD9,'ABY','CMP',4],[0xC1,'IZX','CMP',6],[0xD1,'IZY','CMP',5],
+    [0xE0,'IMM','CPX',2],[0xE4,'ZP0','CPX',3],[0xEC,'ABS','CPX',4],
+    [0xC0,'IMM','CPY',2],[0xC4,'ZP0','CPY',3],[0xCC,'ABS','CPY',4],
+    [0xE6,'ZP0','INC',5],[0xF6,'ZPX','INC',6],[0xEE,'ABS','INC',6],[0xFE,'ABX','INC',7],
+    [0xC6,'ZP0','DEC',5],[0xD6,'ZPX','DEC',6],[0xCE,'ABS','DEC',6],[0xDE,'ABX','DEC',7],
+    [0xE8,'IMP','INX',2],[0xC8,'IMP','INY',2],[0xCA,'IMP','DEX',2],[0x88,'IMP','DEY',2],
+    [0x0A,'IMP','ASL',2],[0x06,'ZP0','ASL',5],[0x16,'ZPX','ASL',6],[0x0E,'ABS','ASL',6],[0x1E,'ABX','ASL',7],
+    [0x4A,'IMP','LSR',2],[0x46,'ZP0','LSR',5],[0x56,'ZPX','LSR',6],[0x4E,'ABS','LSR',6],[0x5E,'ABX','LSR',7],
+    [0x2A,'IMP','ROL',2],[0x26,'ZP0','ROL',5],[0x36,'ZPX','ROL',6],[0x2E,'ABS','ROL',6],[0x3E,'ABX','ROL',7],
+    [0x6A,'IMP','ROR',2],[0x66,'ZP0','ROR',5],[0x76,'ZPX','ROR',6],[0x6E,'ABS','ROR',6],[0x7E,'ABX','ROR',7],
+    [0x24,'ZP0','BIT',3],[0x2C,'ABS','BIT',4],
+    [0x4C,'ABS','JMP',3],[0x6C,'IND','JMP',5],
+    [0x20,'ABS','JSR',6],[0x60,'IMP','RTS',6],[0x40,'IMP','RTI',6],
+    [0x90,'REL','BCC',2],[0xB0,'REL','BCS',2],[0xF0,'REL','BEQ',2],[0x30,'REL','BMI',2],[0xD0,'REL','BNE',2],[0x10,'REL','BPL',2],[0x50,'REL','BVC',2],[0x70,'REL','BVS',2],
+    [0x18,'IMP','CLC',2],[0x38,'IMP','SEC',2],[0x58,'IMP','CLI',2],[0x78,'IMP','SEI',2],[0xB8,'IMP','CLV',2],[0xD8,'IMP','CLD',2],[0xF8,'IMP','SED',2],
+  ]);
+  
+  // ===== NES Machine =====
+  class NES {
+    constructor(canvas) {
+      this.ppu = new PPU();
+      this.ppu.attachCanvas(canvas);
+      this.input = new Controllers();
+      this.cart = null; this.bus = null; this.cpu = null; this.apu = new APU();
+      this.running = false; this.makeResponsiveCanvas();
+      this._lastFrameTime = 0; this._frameInterval = 1000/60; this._pendingFrames = 0; this._lastFpsUpdate = performance.now(); this._frameCount = 0; this._cpuCycleDebt = 0; this._lastTimestamp = 0;
+    }
+    makeResponsiveCanvas() {
+      const c = this.ppu.canvas;
+      const resize = () => { if(window.innerWidth < 900) { c.style.width = "98vw"; c.style.height = Math.round(240*98/256) + "vw"; } else { c.style.width = "768px"; c.style.height = "720px"; } };
+      window.addEventListener('resize', resize); resize();
+    }
+    loadROM(bytes) {
+      this.cart = new Cartridge(bytes); this.ppu.connectCart(this.cart);
+      this.bus = new Bus(null, this.ppu, this.cart, this.input, this.apu);
+      this.cpu = new CPU6502(this.bus); this.bus.cpu = this.cpu;
+      if (this.ppu.mapper instanceof Mapper4) { this.ppu.mapper.cpu = this.cpu; this.ppu.mapper.ppu = this.ppu; }
+      this.cpu.reset();
+      const elMap = document.getElementById('mapper'); const elMir = document.getElementById('mirror');
+      if(elMap) elMap.textContent = this.cart.mapper; if(elMir) elMir.textContent = this.cart.mirror;
+    }
+    reset() { if (!this.cpu) return; this.cpu.reset(); this.ppu.reset(); }
+    step() { const cyc = this.cpu.step(); for (let i = 0; i < cyc * 3; i++) { this.ppu.step(); if (this.ppu.nmi) { this.cpu.nmi(); this.ppu.nmi = false; } } this.apu.step(cyc); }
+    run() {
+      if (this.running) return;
+      this.running = true; this._lastTimestamp = performance.now(); this._cpuCycleDebt = 0;
+      const animate = (now) => {
+        if (!this.running) return;
+        const elapsed = now - this._lastTimestamp; this._lastTimestamp = now;
+        if (elapsed > 100) { requestAnimationFrame(animate); return; }
+        const cyclesThisFrame = (elapsed * (CPU_FREQ / 1000) * Settings.emulation.speed) + this._cpuCycleDebt;
+        const cyclesToRun = Math.floor(cyclesThisFrame); this._cpuCycleDebt = cyclesThisFrame - cyclesToRun;
+        let cpuCyclesExecuted = 0;
+        while (cpuCyclesExecuted < cyclesToRun) {
+          const cyc = this.cpu.step(); cpuCyclesExecuted += cyc;
+          for (let i = 0; i < cyc * 3; i++) { this.ppu.step(); if (this.ppu.nmi) { this.cpu.nmi(); this.ppu.nmi = false; } }
+          this.apu.step(cyc);
+        }
+        if (this.ppu.frameComplete) { this._frameCount++; this.ppu.frameComplete = false; this.apu.debugFrameCount++; }
+        if (now - this._lastFpsUpdate >= 1000) {
+          const elFps = document.getElementById('fps'); const elMhz = document.getElementById('mhz'); const elIrqs = document.getElementById('irqs');
+          if (elFps) elFps.textContent = this._frameCount; if (elMhz) elMhz.textContent = "~1.79";
+          if (elIrqs && this.ppu.mapper instanceof Mapper4) { elIrqs.textContent = `Cnt:${this.ppu.mapper.irqCounter} En:${this.ppu.mapper.irqEnable?'Y':'N'}`; } else if (elIrqs) { elIrqs.textContent = '—'; }
+          this._frameCount = 0; this._lastFpsUpdate = now;
+        }
+        requestAnimationFrame(animate);
+      };
+      requestAnimationFrame(animate);
+    }
+    pause() { this.running = false; }
+    serializeState() {
+      if (!this.cpu || !this.ppu || !this.cart) { throw new Error('No ROM loaded'); }
+      return {
+        version: 1,
+        cpu: { A: this.cpu.A, X: this.cpu.X, Y: this.cpu.Y, SP: this.cpu.SP, PC: this.cpu.PC, P: this.cpu.P, cycles: this.cpu.cycles || 0 },
+        ppu: { ctrl: this.ppu.ctrl, mask: this.ppu.mask, status: this.ppu.status, oamAddr: this.ppu.oamAddr, v: this.ppu.v, t: this.ppu.t, x: this.ppu.x, w: this.ppu.w, cycle: this.ppu.cycle, scanline: this.ppu.scanline, vram: Array.from(this.ppu.vram), oam: Array.from(this.ppu.oam), palette: Array.from(this.ppu.palette) },
+        apu: { frameCounter: this.apu.frameCounter, frameMode: this.apu.frameMode, pulse1: Object.assign({}, this.apu.pulse1), pulse2: Object.assign({}, this.apu.pulse2), triangle: Object.assign({}, this.apu.triangle), noise: Object.assign({}, this.apu.noise), dmc: Object.assign({}, this.apu.dmc) },
+        bus: { ram: Array.from(this.bus.ram) },
+        mapper: this.cart.mapper === 4 ? { type: 4, targetReg: this.cart.mapperObj.targetReg, prgMode: this.cart.mapperObj.prgMode, chrMode: this.cart.mapperObj.chrMode, regs: Array.from(this.cart.mapperObj.regs), irqLatch: this.cart.mapperObj.irqLatch, irqCounter: this.cart.mapperObj.irqCounter, irqEnable: this.cart.mapperObj.irqEnable } : this.cart.mapper === 1 ? { type: 1, shiftReg: this.cart.mapperObj.shiftReg, control: this.cart.mapperObj.control, chrBank0: this.cart.mapperObj.chrBank0, chrBank1: this.cart.mapperObj.chrBank1, prgBank: this.cart.mapperObj.prgBank } : this.cart.mapper === 2 ? { type: 2, prgBank: this.cart.mapperObj.prgBank } : this.cart.mapper === 3 ? { type: 3, chrBank: this.cart.mapperObj.chrBank } : { type: this.cart.mapper }
+      };
+    }
+    deserializeState(state) {
+      if (!this.cpu || !this.ppu || !this.cart) { throw new Error('No ROM loaded'); }
+      if (state.version !== 1) { throw new Error('Incompatible save state version'); }
+      this.cpu.A = state.cpu.A; this.cpu.X = state.cpu.X; this.cpu.Y = state.cpu.Y; this.cpu.SP = state.cpu.SP; this.cpu.PC = state.cpu.PC; this.cpu.P = state.cpu.P; if (state.cpu.cycles !== undefined) this.cpu.cycles = state.cpu.cycles;
+      this.ppu.ctrl = state.ppu.ctrl; this.ppu.mask = state.ppu.mask; this.ppu.status = state.ppu.status; this.ppu.oamAddr = state.ppu.oamAddr; this.ppu.v = state.ppu.v; this.ppu.t = state.ppu.t; this.ppu.x = state.ppu.x; this.ppu.w = state.ppu.w; this.ppu.cycle = state.ppu.cycle; this.ppu.scanline = state.ppu.scanline; this.ppu.vram.set(state.ppu.vram); this.ppu.oam.set(state.ppu.oam); this.ppu.palette.set(state.ppu.palette);
+      this.apu.frameCounter = state.apu.frameCounter; this.apu.frameMode = state.apu.frameMode;
+      Object.assign(this.apu.pulse1, state.apu.pulse1); Object.assign(this.apu.pulse2, state.apu.pulse2); Object.assign(this.apu.triangle, state.apu.triangle); Object.assign(this.apu.noise, state.apu.noise); Object.assign(this.apu.dmc, state.apu.dmc);
+      this.bus.ram.set(state.bus.ram);
+      if (state.mapper.type === 4 && this.cart.mapperObj instanceof Mapper4) { this.cart.mapperObj.targetReg = state.mapper.targetReg; this.cart.mapperObj.prgMode = state.mapper.prgMode; this.cart.mapperObj.chrMode = state.mapper.chrMode; this.cart.mapperObj.regs.set(state.mapper.regs); this.cart.mapperObj.irqLatch = state.mapper.irqLatch; this.cart.mapperObj.irqCounter = state.mapper.irqCounter; this.cart.mapperObj.irqEnable = state.mapper.irqEnable; }
+      else if (state.mapper.type === 1 && this.cart.mapperObj instanceof Mapper1) { this.cart.mapperObj.shiftReg = state.mapper.shiftReg; this.cart.mapperObj.control = state.mapper.control; this.cart.mapperObj.chrBank0 = state.mapper.chrBank0; this.cart.mapperObj.chrBank1 = state.mapper.chrBank1; this.cart.mapperObj.prgBank = state.mapper.prgBank; }
+      else if (state.mapper.type === 2 && this.cart.mapperObj instanceof Mapper2) { this.cart.mapperObj.prgBank = state.mapper.prgBank; }
+      else if (state.mapper.type === 3 && this.cart.mapperObj instanceof Mapper3) { this.cart.mapperObj.chrBank = state.mapper.chrBank; }
+    }
+  }
+
+  // ===== UI Glue Code =====
+  
+  // 1. Select DOM Elements
+  const canvas = document.getElementById('screen');
+  const romInput = document.getElementById('rom');
+  const btnRun = document.getElementById('btnRun');
+  const btnPause = document.getElementById('btnPause');
+  const btnReset = document.getElementById('btnReset');
+  const romName = document.getElementById('romName');
+  
+  // 2. Initialize NES
+  const nes = new NES(canvas);
+  
+  // Expose NES for debugging/global access if needed
+  window.nes = nes;
+
+  // 3. Main Controls
+  if(romInput) {
+    romInput.addEventListener('change', async (e)=>{
+      const f=e.target.files[0]; if(!f) return; romName.textContent=f.name;
+      const buf = new Uint8Array(await f.arrayBuffer());
+      try {
+        nes.loadROM(buf); btnRun.disabled=false; btnPause.disabled=false; btnReset.disabled=false;
+      } catch(err){ alert('ROM load failed: '+err.message); btnRun.disabled=true; btnPause.disabled=true; btnReset.disabled=true; }
+    });
+  }
+  if(btnRun) btnRun.addEventListener('click',()=>nes.run());
+  if(btnPause) btnPause.addEventListener('click',()=>nes.pause());
+  if(btnReset) btnReset.addEventListener('click',()=>nes.reset());
+
+  // Prevent scrolling/touchmove GLOBALLY except in specific areas
+  window.addEventListener('touchmove', function(e){
+    // Allow scroll if target is inside settings body
+    if (e.target.closest('.settings-body')) return;
+    
+    // Prevent default scroll behavior for everything else (gameplay, static UI)
+    if(e.cancelable) e.preventDefault();
+  }, {passive:false});
+  
+  // 4. Settings Logic
+  let settingsOpen = false;
+  let pausedByMenu = false;
+  const btnSettings = document.getElementById('btnSettings');
+  const settingsModal = document.getElementById('settingsModal');
+
+  const toggleSettings = () => {
+    settingsOpen = !settingsOpen;
+    if(settingsOpen) {
+      btnSettings.classList.add('active');
+      settingsModal.classList.add('active');
+      if (nes.running) { nes.pause(); pausedByMenu = true; }
+    } else {
+      btnSettings.classList.remove('active');
+      settingsModal.classList.remove('active');
+      if (pausedByMenu) { nes.run(); pausedByMenu = false; }
+    }
+  };
+
+  if(btnSettings) {
+    btnSettings.addEventListener('click', (e) => { if(e.detail !== 0) toggleSettings(); });
+    btnSettings.addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); toggleSettings(); }, {passive: false});
+  }
+  window.closeSettings = () => { if(settingsOpen) toggleSettings(); };
+
+  // 5. Settings Wiring
+  const toggleAudioEnabled = document.getElementById('toggleAudioEnabled');
+  const sliderVolume = document.getElementById('sliderVolume');
+  const volumeDisplay = document.getElementById('volumeDisplay');
+  if (toggleAudioEnabled) { toggleAudioEnabled.addEventListener('click', () => { Settings.audio.enabled = !Settings.audio.enabled; toggleAudioEnabled.classList.toggle('active', Settings.audio.enabled); }); }
+  if (sliderVolume && volumeDisplay) { sliderVolume.addEventListener('input', (e) => { const value = parseInt(e.target.value); Settings.audio.volume = value / 100; volumeDisplay.textContent = value + '%'; }); }
+
+  const toggleKeyboard = document.getElementById('toggleKeyboard');
+  const toggleTouch = document.getElementById('toggleTouch');
+  const toggleGamepad = document.getElementById('toggleGamepad');
+  if (toggleKeyboard) { toggleKeyboard.addEventListener('click', () => { Settings.input.keyboard = !Settings.input.keyboard; toggleKeyboard.classList.toggle('active', Settings.input.keyboard); }); }
+  if (toggleTouch) { toggleTouch.addEventListener('click', () => { Settings.input.touch = !Settings.input.touch; toggleTouch.classList.toggle('active', Settings.input.touch); const mc = document.getElementById('mobileControls'); if(mc) mc.style.display = Settings.input.touch ? '' : 'none'; }); }
+  if (toggleGamepad) { toggleGamepad.addEventListener('click', () => { Settings.input.gamepad = !Settings.input.gamepad; toggleGamepad.classList.toggle('active', Settings.input.gamepad); }); }
+
+  const toggleIntegerScale = document.getElementById('toggleIntegerScale');
+  const toggleScanlines = document.getElementById('toggleScanlines');
+  const scanlinesEl = document.getElementById('scanlines');
+  if (toggleIntegerScale) { toggleIntegerScale.addEventListener('click', () => { Settings.display.integerScale = !Settings.display.integerScale; toggleIntegerScale.classList.toggle('active', Settings.display.integerScale); }); }
+  if (toggleScanlines && scanlinesEl) { toggleScanlines.addEventListener('click', () => { Settings.display.scanlines = !Settings.display.scanlines; toggleScanlines.classList.toggle('active', Settings.display.scanlines); scanlinesEl.classList.toggle('active', Settings.display.scanlines); }); }
+
+  const sliderSpeed = document.getElementById('sliderSpeed');
+  const speedDisplay = document.getElementById('speedDisplay');
+  const btnResetEmulator = document.getElementById('btnResetEmulator');
+  if (sliderSpeed && speedDisplay) { sliderSpeed.addEventListener('input', (e) => { const value = parseInt(e.target.value); Settings.emulation.speed = value / 100; speedDisplay.textContent = (value / 100).toFixed(1) + 'x'; }); }
+  if (btnResetEmulator) { btnResetEmulator.addEventListener('click', () => { if (nes.cpu) { nes.reset(); btnResetEmulator.textContent = '✓ Reset!'; setTimeout(() => { btnResetEmulator.textContent = 'Reset'; }, 1000); } }); }
+
+  // ROM URL Fetcher
+  const inputROMUrl = document.getElementById('inputROMUrl');
+  const btnFetchROM = document.getElementById('btnFetchROM');
+  const romUrlStatus = document.getElementById('romUrlStatus');
+  if (btnFetchROM && inputROMUrl && romUrlStatus) {
+    btnFetchROM.addEventListener('click', async () => {
+      const url = inputROMUrl.value.trim();
+      if (!url) { romUrlStatus.innerHTML = '<div class="error-message">Please enter a URL</div>'; return; }
+      btnFetchROM.disabled = true; btnFetchROM.textContent = 'Fetching...'; romUrlStatus.innerHTML = '';
+      try {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const buffer = await response.arrayBuffer();
+        const bytes = new Uint8Array(buffer);
+        nes.loadROM(bytes);
+        romName.textContent = url.split('/').pop() || 'rom.nes';
+        btnRun.disabled = false; btnPause.disabled = false; btnReset.disabled = false;
+        romUrlStatus.innerHTML = '<div class="success-message">✓ ROM loaded successfully!</div>';
+        setTimeout(() => { closeSettings(); nes.run(); }, 1000);
+      } catch (err) { romUrlStatus.innerHTML = `<div class="error-message">Error: ${err.message}</div>`; } finally { btnFetchROM.disabled = false; btnFetchROM.textContent = 'Fetch ROM'; }
+    });
+  }
+
+  // Save States
+  const btnExportState = document.getElementById('btnExportState');
+  const btnImportState = document.getElementById('btnImportState');
+  const inputSaveState = document.getElementById('inputSaveState');
+  const saveStateStatus = document.getElementById('saveStateStatus');
+  
+  if (btnExportState && btnImportState) {
+    const checkROMLoaded = () => { const hasROM = nes.cpu !== null; btnExportState.disabled = !hasROM; btnImportState.disabled = !hasROM; };
+    checkROMLoaded();
+    const originalLoadROM = nes.loadROM.bind(nes);
+    nes.loadROM = function(...args) { const result = originalLoadROM(...args); checkROMLoaded(); return result; };
+  }
+  
+  if (btnExportState) {
+    btnExportState.addEventListener('click', () => {
+      try {
+        const state = nes.serializeState();
+        const blob = new Blob([JSON.stringify(state)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = url; a.download = (romName.textContent || 'savestate') + '.sav'; a.click(); URL.revokeObjectURL(url);
+        if (saveStateStatus) { saveStateStatus.innerHTML = '<div class="success-message">✓ State exported!</div>'; setTimeout(() => { saveStateStatus.innerHTML = ''; }, 3000); }
+      } catch (err) { if (saveStateStatus) { saveStateStatus.innerHTML = `<div class="error-message">Export failed: ${err.message}</div>`; } }
+    });
+  }
+  
+  if (btnImportState && inputSaveState) {
+    btnImportState.addEventListener('click', () => { inputSaveState.click(); });
+    inputSaveState.addEventListener('change', async (e) => {
+      const file = e.target.files[0]; if (!file) return;
+      try {
+        const text = await file.text(); const state = JSON.parse(text); nes.deserializeState(state);
+        if (saveStateStatus) { saveStateStatus.innerHTML = '<div class="success-message">✓ State loaded!</div>'; setTimeout(() => { saveStateStatus.innerHTML = ''; }, 3000); }
+      } catch (err) { if (saveStateStatus) { saveStateStatus.innerHTML = `<div class="error-message">Import failed: ${err.message}</div>`; } }
+      inputSaveState.value = '';
+    });
+  }
+
+})();
+</script>
+</body>
+</html>
