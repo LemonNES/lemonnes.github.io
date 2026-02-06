@@ -1906,7 +1906,39 @@ class CPU6502{
   }
 
   // ===== UI Glue Code =====
-  
+    document.querySelectorAll('.touch-btn').forEach(btn => {
+    const buttonName = btn.dataset.button;
+    
+    btn.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setBtnState(btn, true);
+      // FIXED: changed nes.controllers to nes.input
+      if(buttonName && nes.input && Settings.input.touch) {
+        nes.input.setButton(0, buttonName, true);
+      }
+    }, {passive: false});
+    
+    btn.addEventListener('touchend', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setBtnState(btn, false);
+      // FIXED: changed nes.controllers to nes.input
+      if(buttonName && nes.input && Settings.input.touch) {
+        nes.input.setButton(0, buttonName, false);
+      }
+    }, {passive: false});
+    
+    btn.addEventListener('touchcancel', (e) => {
+      if(e) e.preventDefault();
+      setBtnState(btn, false);
+      // FIXED: changed nes.controllers to nes.input
+      if(buttonName && nes.input && Settings.input.touch) {
+        nes.input.setButton(0, buttonName, false);
+      }
+    }, {passive: false});
+  });
+
   // 1. Select DOM Elements
   const canvas = document.getElementById('screen');
   
