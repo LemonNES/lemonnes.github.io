@@ -148,7 +148,7 @@
       -webkit-tap-highlight-color: transparent; 
     }
 
-  
+    /* Active State */
     .touch-btn.active, .touch-btn:active {
       background: rgba(255, 255, 255, 0.15);
       border-color: var(--acc);
@@ -156,7 +156,7 @@
       transform: scale(0.92);
     }
 
-  
+    /* MENU PILLS (Start/Select) */
     .menu-pad {
       position: absolute;
       bottom: 240px;
@@ -222,7 +222,7 @@
     .d-btn.left  { grid-area: 2/1; border-radius: 12px 4px 4px 12px; }
     .d-btn.right { grid-area: 2/3; border-radius: 4px 12px 12px 4px; }
 
-    
+    /* ACTION BUTTONS */
     .ab-pad {
       position: absolute;
       bottom: 20px;
@@ -600,7 +600,7 @@
     <div class="top-bar">
       <label for="romInput" class="icon-btn" title="Load ROM">📂</label>
       <input type="file" id="romInput" accept=".nes" style="display:none;">
-      <div class="icon-btn" id="btnSettings" title="Settings">⚙️</div>
+      <div class="icon-btn" id="btnSettings" title="Settings">⚙</div>
     </div>
 
     <div class="controls-area" id="controls">
@@ -629,7 +629,7 @@
   <div class="settings-modal" id="settingsModal">
     <div class="settings-container">
       <div class="settings-header">
-        Settings
+        ⚙️ Settings
         <span class="settings-close" onclick="closeSettings()">×</span>
       </div>
       <div class="settings-body">
@@ -764,7 +764,7 @@
   <script>
 (() => {
   const BUILD = new Date().toISOString().replace('T',' ').slice(0,19);
-  console.log('LemonNES Build:', BUILD);
+
 
   // ===== GLOBAL SETTINGS OBJECT =====
   const Settings = {
@@ -806,9 +806,8 @@
       });
     }
     setButton(player, button, pressed) {
-      if(player !== 0) return; // Only player 1 supported for now
+      if(player !== 0) return;
       const bit = this.buttonMap[button];
-      console.log('setButton called:', button, 'bit:', bit, 'pressed:', pressed, 'state1 before:', this.state1.toString(2));
       if(bit === undefined) {
         console.warn('Unknown button:', button);
         return;
@@ -818,7 +817,6 @@
       } else {
         this.state1 &= ~(1 << bit);
       }
-      console.log('state1 after:', this.state1.toString(2));
     }
     handleKeyEvent(code, pressed) {
       const bit = this.keyMap[code];
@@ -935,20 +933,16 @@
     clockTriangleLinearCounter() { if (this.triangle.linearReloadFlag) { this.triangle.linearCounter = this.triangle.linearCounterReload; } else if (this.triangle.linearCounter > 0) { this.triangle.linearCounter--; } if (!this.triangle.linearCounterControl) { this.triangle.linearReloadFlag = false; } }
     clockSweeps() { this.clockSweep(this.pulse1, false); this.clockSweep(this.pulse2, true); }
     clockSweep(pulse, isChannel2) { 
-      // Track if we need to clock the sweep this frame
       let shouldUpdate = false;
       
       if (pulse.sweepReload) { 
-        // Reload sets the counter but doesn't immediately clock
         pulse.sweepCounter = pulse.sweepPeriod; 
         pulse.sweepReload = false;
-        // Some implementations clock immediately on reload when counter is 0
         if (pulse.sweepCounter === 0) shouldUpdate = true;
       } else if (pulse.sweepCounter > 0) { 
         pulse.sweepCounter--; 
         if (pulse.sweepCounter === 0) shouldUpdate = true;
       } else { 
-        // Counter is 0, clock it
         shouldUpdate = true;
         pulse.sweepCounter = pulse.sweepPeriod; 
       }
@@ -963,10 +957,8 @@
         } 
         if (newPeriod >= 8 && newPeriod <= 0x7FF) { 
           pulse.timerPeriod = newPeriod; 
-          // Clamp timer cycle to prevent phase issues
           if (pulse.timerCycle > pulse.timerPeriod) pulse.timerCycle = 0;
         } else { 
-          // Target period out of range - mute channel
           pulse.lengthCounter = 0; 
         } 
       } 
@@ -1042,10 +1034,9 @@
   }
   
   writeReg(addr, val) {
-    // Bit 7 = reset
     if (val & 0x80) {
       this.shift = 0x10;
-      this.ctrl |= 0x0C;  // Reset to mode 3
+      this.ctrl |= 0x0C;
       return;
     }
     
@@ -1058,10 +1049,8 @@
       this.shift = 0x10;
       
       if (reg === 0) {
-        // Control register
         this.ctrl = data;
         const mirrorMode = data & 3;
-        // Update mirroring on cart
         if (mirrorMode === 0) this.cart.mirror = 'single0';
         else if (mirrorMode === 1) this.cart.mirror = 'single1';
         else if (mirrorMode === 2) this.cart.mirror = 'vertical';
@@ -1097,13 +1086,11 @@
     const prgSize = this.cart.prg.length;
     
     if (mode === 0 || mode === 1) {
-      // 32KB mode - ignore low bit of bank
       const bank32 = (this.prgBank >> 1);
       const offset = (bank32 * 0x8000) + (addr - 0x8000);
       return this.cart.prg[offset % prgSize];
     }
     else if (mode === 2) {
-      // Fix first bank at $8000, switch 16KB at $C000
       if (addr < 0xC000) {
         return this.cart.prg[(addr - 0x8000) % prgSize];
       } else {
@@ -1112,12 +1099,10 @@
       }
     }
     else {
-      // mode === 3: Switch 16KB at $8000, fix last bank at $C000
       if (addr < 0xC000) {
         const offset = (this.prgBank * 0x4000) + (addr - 0x8000);
         return this.cart.prg[offset % prgSize];
       } else {
-        // Last 16KB bank
         const lastBankOffset = prgSize - 0x4000;
         return this.cart.prg[lastBankOffset + (addr - 0xC000)];
       }
@@ -1141,12 +1126,10 @@
     const mode = (this.ctrl >> 4) & 1;
     
     if (mode === 0) {
-      // 8KB mode - switch entire 8KB, use bank0 >> 1
       const bank8 = (this.chrBank0 >> 1);
       const offset = (bank8 * 0x2000) + addr;
       return this.cart.chr[offset % chrSize];
     } else {
-      // 4KB mode - separate banks
       if (addr < 0x1000) {
         const offset = (this.chrBank0 * 0x1000) + addr;
         return this.cart.chr[offset % chrSize];
@@ -1166,12 +1149,10 @@
       const mode = (this.ctrl >> 4) & 1;
       
       if (mode === 0) {
-        // 8KB mode
         const bank8 = (this.chrBank0 >> 1);
         const offset = (bank8 * 0x2000) + addr;
         this.cart.chr[offset % chrSize] = val;
       } else {
-        // 4KB mode
         if (addr < 0x1000) {
           const offset = (this.chrBank0 * 0x1000) + addr;
           this.cart.chr[offset % chrSize] = val;
@@ -1193,7 +1174,6 @@ class Mapper2 extends Mapper {
   
   prgRead(addr) {
     if (addr < 0xC000) {
-      // Switchable bank at $8000-$BFFF
       const bankNum = this.bank % this.numBanks;
       const base = bankNum * 0x4000;
       return this.cart.prg[base + (addr - 0x8000)];
@@ -1204,7 +1184,6 @@ class Mapper2 extends Mapper {
   }
   
   prgWrite(addr, val) {
-    // Bank select register
     this.bank = val & 0x0F;
   }
   
@@ -1226,7 +1205,6 @@ class Mapper3 extends Mapper {
   
   prgRead(addr) {
     // PRG ROM is not banked - either 16KB or 32KB
-    // If 16KB, mirror it; if 32KB, use full range
     const prgMask = (this.cart.prg.length > 0x4000) ? 0x7FFF : 0x3FFF;
     return this.cart.prg[(addr - 0x8000) & prgMask];
   }
@@ -1256,19 +1234,17 @@ class Mapper3 extends Mapper {
         this.cpu = null; 
         this.ppu = null;
         
-        // Bank selection and data
         this.bankSelect = 0; 
         this.bankData = new Uint8Array(8); 
         this.prgMode = 0; 
         this.chrMode = 0;
         
         // ===== IRQ State =====
-        this.irqLatch = 0;        // Reload value for counter
-        this.irqCounter = 0;      // Current counter value
+        this.irqLatch = 0;
+        this.irqCounter = 0;
         this.irqEnable = false;   // IRQ enabled flag
-        this.irqReloadPending = false;  // Reload on next scanline clock
+        this.irqReloadPending = false;
         
-        // Bank mappings
         this.prgBanks = new Uint8Array(4); 
         this.chrBanks = new Uint8Array(8);
         this.prgBanksTotal = this.cart.prg.length / 0x2000; 
@@ -1282,7 +1258,6 @@ class Mapper3 extends Mapper {
     ppuCycle() {
         if (!this.ppu) return;
         
-        // Only clock counter when rendering is enabled
         const renderingEnabled = (this.ppu.mask & 0x18) !== 0; 
         if (!renderingEnabled) return;
         
@@ -1290,7 +1265,6 @@ class Mapper3 extends Mapper {
         const cycle = this.ppu.cycle;
         
         // Clock the counter at cycle 260 of visible scanlines (0-239)
-        // This matches MMC3 behavior - counter clocks once per scanline
         if (cycle === 260 && scanline >= 0 && scanline <= 239) { 
             this.clockCounter(); 
         }
@@ -1298,23 +1272,19 @@ class Mapper3 extends Mapper {
     
     // ===== Scanline Counter Logic =====
     clockCounter() {
-        // If reload is pending, reload the counter and clear the flag
         if (this.irqReloadPending) { 
             this.irqCounter = this.irqLatch; 
             this.irqReloadPending = false; 
             return; 
         }
         
-        // If counter is 0, reload it
         if (this.irqCounter === 0) { 
             this.irqCounter = this.irqLatch; 
         } else { 
-            // Otherwise decrement
             this.irqCounter--; 
         }
         
         // ===== CRITICAL: Assert IRQ line when counter reaches 0 AND IRQ is enabled =====
-        // This is LEVEL-TRIGGERED. The line stays asserted until explicitly cleared.
         if (this.irqCounter === 0 && this.irqEnable && this.cpu) { 
             this.cpu.irqLine = true; 
         }
@@ -1364,18 +1334,14 @@ class Mapper3 extends Mapper {
     writeRegister(addr, val) {
         if (addr < 0x8000) return;
         
-        // MMC3 uses bit 0 of address to determine even/odd register
         if ((addr & 1) === 0) {
-            // EVEN addresses: $8000-$9FFE, $A000-$BFFE, $C000-$DFFE, $E000-$FFFE
             if (addr < 0xA000) {
-                // $8000-$9FFE: Bank select
                 this.bankSelect = val; 
                 const p = (val >> 6) & 1;  // PRG ROM bank mode
                 const c = (val >> 7) & 1;  // CHR A12 inversion
                 if (this.prgMode !== p) { this.prgMode = p; this.updatePrgMapping(); }
                 if (this.chrMode !== c) { this.chrMode = c; this.updateChrMapping(); }
             } else if (addr < 0xC000) { 
-                // $A000-$BFFE: Mirroring
                 if (this.ppu) this.ppu.mirror = (val & 1) ? 'horizontal' : 'vertical'; 
             } else if (addr < 0xE000) { 
                 // $C000-$DFFE: IRQ latch
@@ -1389,24 +1355,20 @@ class Mapper3 extends Mapper {
                 }
             }
         } else {
-            // ODD addresses: $8001-$9FFF, $A001-$BFFF, $C001-$DFFF, $E001-$FFFF
             if (addr < 0xA000) { 
-                // $8001-$9FFF: Bank data
                 this.bankData[this.bankSelect & 7] = val; 
-                // Update mappings when bank data changes
                 (this.bankSelect & 7) >= 6 ? this.updatePrgMapping() : this.updateChrMapping(); 
             } else if (addr < 0xC000) { 
                 // $A001-$BFFF: PRG RAM protect (not implemented)
             } else if (addr < 0xE000) { 
                 // $C001-$DFFF: IRQ reload
                 // ===== Set reload flag - counter will reload on NEXT clock =====
-                this.irqCounter = 0;  // Some implementations also clear counter
+                this.irqCounter = 0;
                 this.irqReloadPending = true; 
             } else { 
                 // $E001-$FFFF: IRQ enable
                 // ===== CRITICAL: Enable IRQ =====
                 // Note: Enabling IRQ does NOT immediately assert the line.
-                // The line is only asserted when the counter reaches 0.
                 this.irqEnable = true; 
                 // Do NOT assert cpu.irqLine here - it only fires when counter hits 0
             }
@@ -1418,21 +1380,19 @@ class Mapper3 extends Mapper {
         // PRG mode determines which banks are mapped where
         const b8 = this.prgMode === 0 ? this.bankData[6] : this.lastBank - 1; 
         const bC = this.prgMode === 0 ? this.lastBank - 1 : this.bankData[6];
-        this.prgBanks[0] = b8;              // $8000-$9FFF
-        this.prgBanks[1] = this.bankData[7]; // $A000-$BFFF
-        this.prgBanks[2] = bC;              // $C000-$DFFF
-        this.prgBanks[3] = this.lastBank;   // $E000-$FFFF (always last bank)
+        this.prgBanks[0] = b8;
+        this.prgBanks[1] = this.bankData[7];
+        this.prgBanks[2] = bC;
+        this.prgBanks[3] = this.lastBank;
     }
     
     // ===== Update CHR Bank Mapping =====
     updateChrMapping() {
         const R = this.bankData;
-        // R0 and R1 are 2KB banks (ignore lowest bit for even alignment)
         this.chrBanks[0] = R[0] & 0xFE; 
         this.chrBanks[1] = R[0] | 1; 
         this.chrBanks[2] = R[1] & 0xFE; 
         this.chrBanks[3] = R[1] | 1;
-        // R2-R5 are 1KB banks
         this.chrBanks[4] = R[2]; 
         this.chrBanks[5] = R[3]; 
         this.chrBanks[6] = R[4]; 
@@ -1446,17 +1406,13 @@ class Mapper3 extends Mapper {
     // PRG ROM: 8KB banks
     // $A000-$FFFF are fixed to the last three 8KB banks
     this.numPrgBanks = Math.floor(cart.prg.length / 0x2000);
-    this.prgBankSelect = 0; // Selectable bank at $8000
+    this.prgBankSelect = 0;
     
     // CHR ROM: 4KB banks
-    // Two latches: one for low 4KB ($0000-$0FFF), one for high 4KB ($1000-$1FFF)
-    // 0 = $FD state, 1 = $FE state
-    this.latch0 = 0; // Latch for 0x0000
-    this.latch1 = 0; // Latch for 0x1000
+    this.latch0 = 0;
+    this.latch1 = 0;
     
     // Registers for CHR banks
-    // 0: Low/FD ($B000), 1: Low/FE ($C000)
-    // 2: High/FD ($D000), 3: High/FE ($E000)
     this.chrBanks = new Uint8Array(4);
     this.chrBanks.fill(0);
   }
@@ -1469,7 +1425,6 @@ class Mapper3 extends Mapper {
     const offset = addr & 0x1FFF;
 
     if (addr < 0xA000) {
-      // $8000-$9FFF: Switchable 8KB bank
       bankIndex = this.prgBankSelect;
     } else if (addr < 0xC000) {
       // $A000-$BFFF: Fixed to third last bank
@@ -1486,8 +1441,6 @@ class Mapper3 extends Mapper {
   }
 
   prgWrite(addr, val) {
-    // Registers are located at $A000-$FFFF
-    // The mask is effectively $F000 due to how MMC2 decodes
     const reg = addr & 0xF000;
     
     switch (reg) {
@@ -1512,7 +1465,6 @@ class Mapper3 extends Mapper {
         this.chrBanks[3] = val & 0x1F;
         break;
       case 0xF000:
-        // Mirroring: 0=Vertical, 1=Horizontal
         if (this.ppu) {
           this.ppu.mirror = (val & 1) ? 'horizontal' : 'vertical';
         }
@@ -1521,30 +1473,21 @@ class Mapper3 extends Mapper {
   }
 
   chrRead(addr) {
-    // Determine which pattern table (Low $0000 or High $1000)
     const bankSlot = (addr >> 12) & 1; 
     
-    // Select latch state based on the bank slot
     const latchState = bankSlot === 0 ? this.latch0 : this.latch1;
     
-    // Select the bank index based on slot + state
-    // Slot 0 uses banks [0,1], Slot 1 uses banks [2,3]
     const bankIndex = this.chrBanks[(bankSlot * 2) + latchState];
     
-    // Calculate final address
     const result = this.cart.chr[(bankIndex * 0x1000) + (addr & 0xFFF)];
 
     // ===== LATCH UPDATE LOGIC =====
-    // This happens *after* determining the read data but affects *future* reads.
-    // We check specific "magic tiles" that trigger the latch.
     
-    // Low Pattern Table ($0000-$0FFF) triggers
-    if (addr === 0x0FD8) this.latch0 = 0; // $FD latch
-    else if (addr === 0x0FE8) this.latch0 = 1; // $FE latch
+    if (addr === 0x0FD8) this.latch0 = 0;
+    else if (addr === 0x0FE8) this.latch0 = 1;
     
-    // High Pattern Table ($1000-$1FFF) triggers
-    else if (addr >= 0x1FD8 && addr <= 0x1FDF) this.latch1 = 0; // $FD latch
-    else if (addr >= 0x1FE8 && addr <= 0x1FEF) this.latch1 = 1; // $FE latch
+    else if (addr >= 0x1FD8 && addr <= 0x1FDF) this.latch1 = 0;
+    else if (addr >= 0x1FE8 && addr <= 0x1FEF) this.latch1 = 1;
     
     return result;
   }
@@ -1552,7 +1495,6 @@ class Mapper3 extends Mapper {
   chrWrite(addr, val) {
     // MMC2 usually uses CHR ROM, but if RAM, we allow write
     if (!this.cart.chrROM) {
-       // Simple pass-through write (no banking logic typically needed for RAM on MMC2)
        this.cart.chr[addr] = val;
     }
   }
@@ -1662,9 +1604,8 @@ class Mapper3 extends Mapper {
       if (mirror === "vertical") return ((nt & 1) * 0x400) + off; 
       if (mirror === "horizontal") return (((nt >> 1) & 1) * 0x400) + off; 
       if (mirror === "single0" || mirror === "singlescreen" || mirror === "single-screen-lower") return off; 
-      if (mirror === "single1" || mirror === "single-screen-upper") return off; // Both single screens map to same area
+      if (mirror === "single1" || mirror === "single-screen-upper") return off;
       if (mirror === "four" || mirror === "fourscreen") return a & 0x7FF; 
-      // Default to horizontal for unknown modes
       return (((nt >> 1) & 1) * 0x400) + off; 
     }
     ppuRead(addr) { addr &= 0x3fff; if (addr < 0x2000) return this.mapper.chrRead(addr); if (addr < 0x3f00) return this.vram[this.ntIndex(addr)]; let palAddr = addr & 0x1f; if ((palAddr & 3) === 0) palAddr &= 0x0F; return this.palette[palAddr]; }
@@ -1726,15 +1667,11 @@ class CPU6502{
     
     // ===== FIXED NMI: Push status BEFORE modifying I flag =====
     nmi(){ 
-      // Push PC high, PC low
       this.push((this.pc>>8)&0xFF); 
       this.push(this.pc&0xFF); 
-      // Push status with B=0, U=1 (not BRK, unused bit always set)
-      const statusToPush = (this.p & 0xEF) | 0x20;  // Clear B flag (bit 4), set U (bit 5)
+      const statusToPush = (this.p & 0xEF) | 0x20;
       this.push(statusToPush);
-      // NOW set I flag (after push)
       this.setI(1);
-      // Read vector
       const lo=this.read(0xFFFA), hi=this.read(0xFFFB); 
       this.pc=lo|(hi<<8); 
       this.cycles+=7; 
@@ -1745,15 +1682,12 @@ class CPU6502{
       // IRQ only fires when I flag is CLEAR (interrupts enabled)
       if(this.getI()) return; 
       
-      // Push PC high, PC low
       this.push((this.pc>>8)&0xFF); 
       this.push(this.pc&0xFF); 
       
-      // Push status with B=0, U=1 (not BRK, unused bit always set)
-      const statusToPush = (this.p & 0xEF) | 0x20;  // Clear B flag (bit 4), set U (bit 5)
+      const statusToPush = (this.p & 0xEF) | 0x20;
       this.push(statusToPush);
       
-      // NOW set I flag (after push)
       this.setI(1);
       
       // Read IRQ vector
@@ -1781,7 +1715,6 @@ class CPU6502{
         // The interrupt source (mapper, APU) must clear it
       }
       
-      // Fetch and execute instruction
       const op=this.read(this.pc++); const e = OPCODES[op]; if(!e){ return 2; }
       const {mode, ins, cyc} = e; this.addrMode=mode; this.pageCross=0; const addr = this.fetchAddr(mode);
       const cyclesBefore=this.cycles; this.execute(ins, addr); let c = cyc + this.pageCross; this.cycles += c; return this.cycles - cyclesBefore;
@@ -1994,7 +1927,6 @@ class CPU6502{
     }, {passive: false});
   });
 
-  // 1. Select DOM Elements
   const canvas = document.getElementById('screen');
   
   // 2. Initialize NES
@@ -2003,40 +1935,62 @@ class CPU6502{
   // Expose NES for debugging/global access if needed
   window.nes = nes;
 
-  // Prevent scrolling/touchmove GLOBALLY except in specific areas
   window.addEventListener('touchmove', function(e){
-    // Allow scroll if target is inside settings body
     if (e.target.closest('.settings-body')) return;
     
-    // Prevent default scroll behavior for everything else (gameplay, static UI)
     if(e.cancelable) e.preventDefault();
   }, {passive:false});
   
-  // 3.5. Enhanced Touch Controls & Haptic Feedback
-  const triggerHaptic = () => {
+  const triggerHaptic = (button) => {
+    // Try standard Vibration API (Chrome, Firefox Android, Edge, Opera Mobile)
     if (navigator.vibrate) {
-      navigator.vibrate(10);
-      return;
+      try {
+        navigator.vibrate(10);
+        return;
+      } catch (e) {
+      }
     }
     
-    if (window.navigator && window.navigator.vibrate) {
-      window.navigator.vibrate(10);
-      return;
+    if (navigator.webkitVibrate) {
+      try {
+        navigator.webkitVibrate(10);
+        return;
+      } catch (e) {
+      }
     }
     
     if (navigator.getGamepads) {
-      const gamepads = navigator.getGamepads();
-      for (let i = 0; i < gamepads.length; i++) {
-        const gamepad = gamepads[i];
-        if (gamepad && gamepad.vibrationActuator) {
-          gamepad.vibrationActuator.playEffect('dual-rumble', {
-            startDelay: 0,
-            duration: 10,
-            weakMagnitude: 0.5,
-            strongMagnitude: 0.5
-          });
+      try {
+        const gamepads = navigator.getGamepads();
+        for (let i = 0; i < gamepads.length; i++) {
+          const gamepad = gamepads[i];
+          if (gamepad && gamepad.vibrationActuator) {
+            gamepad.vibrationActuator.playEffect('dual-rumble', {
+              startDelay: 0,
+              duration: 10,
+              weakMagnitude: 0.5,
+              strongMagnitude: 0.5
+            });
+            return;
+          }
         }
+      } catch (e) {
       }
+    }
+    
+    if (button && button.classList) {
+      const originalTransform = button.style.transform;
+      const originalTransition = button.style.transition;
+      
+      button.style.transition = 'transform 0.05s cubic-bezier(0.4, 0, 0.2, 1)';
+      button.style.transform = 'scale(0.88)';
+      
+      setTimeout(() => {
+        button.style.transform = originalTransform;
+        setTimeout(() => {
+          button.style.transition = originalTransition;
+        }, 50);
+      }, 50);
     }
   };
 
@@ -2044,25 +1998,20 @@ class CPU6502{
     if(!el) return;
     if(active) {
       el.classList.add('active');
-      triggerHaptic();
+      triggerHaptic(el);
     } else {
       el.classList.remove('active');
     }
   };
 
-  // Touch handling for all control buttons
-  console.log('Setting up touch controls for', document.querySelectorAll('.touch-btn').length, 'buttons');
   document.querySelectorAll('.touch-btn').forEach(btn => {
     const buttonName = btn.dataset.button;
-    console.log('Button:', buttonName, 'element:', btn.className);
     
     btn.addEventListener('touchstart', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      console.log('Touch start:', buttonName);
       setBtnState(btn, true);
       if(buttonName && nes.controllers && Settings.input.touch) {
-        console.log('Setting button', buttonName, 'to pressed');
         nes.controllers.setButton(0, buttonName, true);
       }
     }, {passive: false});
@@ -2070,7 +2019,6 @@ class CPU6502{
     btn.addEventListener('touchend', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      console.log('Touch end:', buttonName);
       setBtnState(btn, false);
       if(buttonName && nes.controllers && Settings.input.touch) {
         nes.controllers.setButton(0, buttonName, false);
@@ -2079,7 +2027,6 @@ class CPU6502{
     
     btn.addEventListener('touchcancel', (e) => {
       if(e) e.preventDefault();
-      console.log('Touch cancel:', buttonName);
       setBtnState(btn, false);
       if(buttonName && nes.controllers && Settings.input.touch) {
         nes.controllers.setButton(0, buttonName, false);
@@ -2087,7 +2034,6 @@ class CPU6502{
     }, {passive: false});
   });
 
-  // Desktop keyboard sync - make virtual buttons light up
   const keyMap = {
     'ArrowUp': document.querySelector('[data-button="up"]'),
     'ArrowDown': document.querySelector('[data-button="down"]'),
@@ -2114,7 +2060,6 @@ class CPU6502{
     }
   });
 
-  // 3.6. Fullscreen functionality (F key on desktop)
   const gameContainer = document.getElementById('gameContainer');
   const screenWrapper = document.querySelector('.screen-wrapper');
   let isFullscreen = false;
@@ -2188,7 +2133,6 @@ class CPU6502{
     }
   });
   
-  // 4. Settings Logic
   let settingsOpen = false;
   let pausedByMenu = false;
   const btnSettings = document.getElementById('btnSettings');
@@ -2213,7 +2157,6 @@ class CPU6502{
   }
   window.closeSettings = () => { if(settingsOpen) toggleSettings(); };
 
-  // 5. Settings Wiring
   const toggleAudioEnabled = document.getElementById('toggleAudioEnabled');
   const sliderVolume = document.getElementById('sliderVolume');
   const volumeDisplay = document.getElementById('volumeDisplay');
@@ -2239,12 +2182,10 @@ class CPU6502{
   if (sliderSpeed && speedDisplay) { sliderSpeed.addEventListener('input', (e) => { const value = parseInt(e.target.value); Settings.emulation.speed = value / 100; speedDisplay.textContent = (value / 100).toFixed(1) + 'x'; }); }
   if (btnResetEmulator) { btnResetEmulator.addEventListener('click', () => { if (nes.cpu) { nes.reset(); btnResetEmulator.textContent = '✓ Reset!'; setTimeout(() => { btnResetEmulator.textContent = 'Reset'; }, 1000); } }); }
 
-  // ROM URL Fetcher
   const inputROMUrl = document.getElementById('inputROMUrl');
   const btnFetchROM = document.getElementById('btnFetchROM');
   const romUrlStatus = document.getElementById('romUrlStatus');
   
-  // ROM file inputs (top bar, settings, and legacy sidebar)
   const romInput = document.getElementById('romInput');
   const romInputSettings = document.getElementById('romInputSettings');
   const romInputLegacy = document.getElementById('rom');
@@ -2255,7 +2196,6 @@ class CPU6502{
       const bytes = new Uint8Array(await file.arrayBuffer());
       nes.loadROM(bytes);
       
-      // Auto-start the game
       setTimeout(() => {
         if (settingsOpen) closeSettings();
         nes.run();
@@ -2300,7 +2240,6 @@ class CPU6502{
     });
   }
 
-  // Save States
   const btnExportState = document.getElementById('btnExportState');
   const btnImportState = document.getElementById('btnImportState');
   const inputSaveState = document.getElementById('inputSaveState');
