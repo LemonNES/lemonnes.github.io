@@ -1,1 +1,1 @@
-LemonNES is an open-source, cross platform, and extremely lightweight Nintendo Entertainment System emulator built from scratch. 
+LemonNES is an open-source, cross platform, and extremely lightweight Nintendo Entertainment System emulator built from scratch. The entire emulator itself is under 2500 lines of code at around 100kb!
