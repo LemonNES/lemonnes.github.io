@@ -2067,6 +2067,262 @@ class CPU6502{
     }
   });
 
+  // ===== SMART GAMEPAD AUTO-INPUT MAPPING =====
+  // Comprehensive gamepad support with auto-detection for mobile and desktop
+  const GamepadManager = {
+    gamepads: {},
+    buttonStates: {},
+    axisStates: {},
+    deadzone: 0.3,
+    
+    // Standard gamepad button mapping (works for most controllers)
+    standardMapping: {
+      0: 'b',      // A/Cross
+      1: 'a',      // B/Circle  
+      2: 'b',      // X/Square
+      3: 'a',      // Y/Triangle
+      8: 'select', // Select/Share
+      9: 'start',  // Start/Options
+      12: 'up',    // D-pad Up
+      13: 'down',  // D-pad Down
+      14: 'left',  // D-pad Left
+      15: 'right'  // D-pad Right
+    },
+    
+    // Alternative mapping for non-standard controllers
+    alternativeMapping: {
+      0: 'a',
+      1: 'b',
+      2: 'b',
+      3: 'a',
+      8: 'select',
+      9: 'start',
+      12: 'up',
+      13: 'down',
+      14: 'left',
+      15: 'right'
+    },
+    
+    // Mobile-specific mappings (iOS, Android gamepads)
+    mobileMapping: {
+      0: 'a',
+      1: 'b',
+      2: 'b',
+      3: 'a',
+      4: 'select',
+      5: 'select',
+      6: 'start',
+      7: 'start',
+      8: 'select',
+      9: 'start',
+      12: 'up',
+      13: 'down',
+      14: 'left',
+      15: 'right'
+    },
+    
+    init() {
+      if (!navigator.getGamepads) {
+        console.log('Gamepad API not supported');
+        return;
+      }
+      
+      // Detect mobile vs desktop
+      this.isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+      
+      // Use appropriate mapping based on platform
+      this.activeMapping = this.isMobile ? this.mobileMapping : this.standardMapping;
+      
+      // Listen for gamepad connection
+      window.addEventListener('gamepadconnected', (e) => {
+        this.onGamepadConnected(e.gamepad);
+      });
+      
+      window.addEventListener('gamepaddisconnected', (e) => {
+        this.onGamepadDisconnected(e.gamepad);
+      });
+      
+      // Start polling loop
+      this.startPolling();
+      
+      console.log('Gamepad Manager initialized (' + (this.isMobile ? 'Mobile' : 'Desktop') + ' mode)');
+    },
+    
+    onGamepadConnected(gamepad) {
+      console.log('Gamepad connected:', gamepad.id, 'Index:', gamepad.index);
+      this.gamepads[gamepad.index] = gamepad;
+      this.buttonStates[gamepad.index] = {};
+      this.axisStates[gamepad.index] = {};
+      
+      // Auto-detect controller type and adjust mapping
+      this.detectControllerType(gamepad);
+    },
+    
+    onGamepadDisconnected(gamepad) {
+      console.log('Gamepad disconnected:', gamepad.id);
+      delete this.gamepads[gamepad.index];
+      delete this.buttonStates[gamepad.index];
+      delete this.axisStates[gamepad.index];
+    },
+    
+    detectControllerType(gamepad) {
+      const id = gamepad.id.toLowerCase();
+      
+      // Xbox controllers
+      if (id.includes('xbox') || id.includes('xinput')) {
+        console.log('Detected Xbox controller');
+        this.activeMapping = this.standardMapping;
+      }
+      // PlayStation controllers
+      else if (id.includes('playstation') || id.includes('dualshock') || id.includes('dualsense')) {
+        console.log('Detected PlayStation controller');
+        this.activeMapping = this.standardMapping;
+      }
+      // Nintendo controllers
+      else if (id.includes('nintendo') || id.includes('pro controller') || id.includes('joy-con')) {
+        console.log('Detected Nintendo controller');
+        // Nintendo uses swapped A/B positions
+        this.activeMapping = this.alternativeMapping;
+      }
+      // Mobile gamepads
+      else if (this.isMobile) {
+        console.log('Using mobile gamepad mapping');
+        this.activeMapping = this.mobileMapping;
+      }
+      // Generic/Unknown
+      else {
+        console.log('Using standard mapping for:', gamepad.id);
+        this.activeMapping = this.standardMapping;
+      }
+    },
+    
+    startPolling() {
+      const poll = () => {
+        if (Settings.input.gamepad) {
+          this.pollGamepads();
+        }
+        requestAnimationFrame(poll);
+      };
+      requestAnimationFrame(poll);
+    },
+    
+    pollGamepads() {
+      const gamepads = navigator.getGamepads();
+      
+      for (let i = 0; i < gamepads.length; i++) {
+        const gamepad = gamepads[i];
+        if (!gamepad) continue;
+        
+        // Update stored gamepad reference
+        this.gamepads[i] = gamepad;
+        
+        // Process buttons
+        this.processButtons(gamepad);
+        
+        // Process analog sticks as D-pad
+        this.processAxes(gamepad);
+      }
+    },
+    
+    processButtons(gamepad) {
+      const index = gamepad.index;
+      
+      if (!this.buttonStates[index]) {
+        this.buttonStates[index] = {};
+      }
+      
+      for (let i = 0; i < gamepad.buttons.length; i++) {
+        const button = gamepad.buttons[i];
+        const pressed = button.pressed;
+        const wasPressed = this.buttonStates[index][i] || false;
+        
+        // Button state changed
+        if (pressed !== wasPressed) {
+          this.buttonStates[index][i] = pressed;
+          
+          // Map to NES button
+          const nesButton = this.activeMapping[i];
+          if (nesButton) {
+            const element = document.querySelector(`[data-button="${nesButton}"]`);
+            setBtnState(element, pressed);
+            
+            // Send to emulator
+            if (nes.input) {
+              nes.input.setButton(0, nesButton, pressed);
+            }
+          }
+        }
+      }
+    },
+    
+    processAxes(gamepad) {
+      const index = gamepad.index;
+      
+      if (!this.axisStates[index]) {
+        this.axisStates[index] = { up: false, down: false, left: false, right: false };
+      }
+      
+      // Left stick (axes 0 and 1)
+      const leftX = gamepad.axes[0] || 0;
+      const leftY = gamepad.axes[1] || 0;
+      
+      // Apply deadzone
+      const horizontal = Math.abs(leftX) > this.deadzone ? leftX : 0;
+      const vertical = Math.abs(leftY) > this.deadzone ? leftY : 0;
+      
+      // Map axes to directions
+      const directions = {
+        left: horizontal < -this.deadzone,
+        right: horizontal > this.deadzone,
+        up: vertical < -this.deadzone,
+        down: vertical > this.deadzone
+      };
+      
+      // Check each direction for state changes
+      ['up', 'down', 'left', 'right'].forEach(dir => {
+        const active = directions[dir];
+        const wasActive = this.axisStates[index][dir];
+        
+        if (active !== wasActive) {
+          this.axisStates[index][dir] = active;
+          
+          const element = document.querySelector(`[data-button="${dir}"]`);
+          setBtnState(element, active);
+          
+          // Send to emulator
+          if (nes.input) {
+            nes.input.setButton(0, dir, active);
+          }
+        }
+      });
+    },
+    
+    // Vibration feedback (if supported)
+    vibrate(duration = 100, weakMagnitude = 0.5, strongMagnitude = 0.5) {
+      Object.values(this.gamepads).forEach(gamepad => {
+        if (gamepad && gamepad.vibrationActuator) {
+          try {
+            gamepad.vibrationActuator.playEffect('dual-rumble', {
+              startDelay: 0,
+              duration: duration,
+              weakMagnitude: weakMagnitude,
+              strongMagnitude: strongMagnitude
+            });
+          } catch (e) {
+            console.log('Vibration not supported');
+          }
+        }
+      });
+    }
+  };
+  
+  // Initialize gamepad manager
+  GamepadManager.init();
+  
+  // Expose for debugging
+  window.GamepadManager = GamepadManager;
+  // ===== END GAMEPAD AUTO-INPUT MAPPING =====
+
   const gameContainer = document.getElementById('gameContainer');
   const screenWrapper = document.querySelector('.screen-wrapper');
   let isFullscreen = false;
