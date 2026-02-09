@@ -1250,6 +1250,8 @@ class Mapper3 extends Mapper {
         this.prgBanksTotal = this.cart.prg.length / 0x2000; 
         this.lastBank = this.prgBanksTotal - 1;
         
+        this.bankData.fill(0);
+        
         this.updatePrgMapping(); 
         this.updateChrMapping();
     }
@@ -1293,10 +1295,11 @@ class Mapper3 extends Mapper {
     // ===== PRG ROM Access =====
     prgRead(addr) {
         if (addr >= 0x6000 && addr <= 0x7FFF) { 
+            if (!this.cart.sram) return 0;
             return this.cart.sram[addr - 0x6000]; 
         }
         let bankIdx = (addr - 0x8000) >> 13; 
-        let bank = this.prgBanks[bankIdx];
+        let bank = this.prgBanks[bankIdx] % this.prgBanksTotal;
         return this.cart.prg[(bank * 0x2000) + (addr & 0x1FFF)];
     }
     
@@ -1543,6 +1546,7 @@ class Mapper3 extends Mapper {
       this.cart = null; this.mapper = null; this.canvas = null; this.ctx = null; this.output = null;
       this.vram = new Uint8Array(0x800); this.palette = new Uint8Array(32); this.bgLatch = { lo: 0, hi: 0, pal: 0 }; this.oddFrame = false;
       this.bgShiftLo = 0; this.bgShiftHi = 0; this.bgAttrShiftLo = 0; this.bgAttrShiftHi = 0; this.bgNextTile = 0; this.bgNextAttr = 0;
+      this.fineXLatch = 0;
     }
     attachCanvas(canvas) { this.canvas = canvas; this.ctx = canvas.getContext("2d", { alpha: false, willReadFrequently: true }); this.output = this.ctx.createImageData(256, 240); }
     connectCart(cart) { 
@@ -1568,7 +1572,7 @@ class Mapper3 extends Mapper {
   
   this.mirror = cart.mirror;
     }
-    reset() { this.v = this.t = this.x = this.w = 0; this.ctrl = this.mask = this.status = this.oamaddr = 0; this.cycle = 0; this.scanline = 261; this.nmi = false; this.frame = 0; this.oddFrame = false; this.bgShiftLo = 0; this.bgShiftHi = 0; this.bgAttrShiftLo = 0; this.bgAttrShiftHi = 0; }
+    reset() { this.v = this.t = this.x = this.w = 0; this.ctrl = this.mask = this.status = this.oamaddr = 0; this.cycle = 0; this.scanline = 261; this.nmi = false; this.frame = 0; this.oddFrame = false; this.bgShiftLo = 0; this.bgShiftHi = 0; this.bgAttrShiftLo = 0; this.bgAttrShiftHi = 0; this.fineXLatch = 0; }
     read(addr) {
       switch (addr) {
         case 0x2002: { const res = (this.status & 0xE0) | (this.buffered & 0x1F); this.openBus = res; this.status &= ~0x80; this.w = 0; this.nmi = false; return res; }
@@ -1604,8 +1608,8 @@ class Mapper3 extends Mapper {
       if (mirror === "vertical") return ((nt & 1) * 0x400) + off; 
       if (mirror === "horizontal") return (((nt >> 1) & 1) * 0x400) + off; 
       if (mirror === "single0" || mirror === "singlescreen" || mirror === "single-screen-lower") return off; 
-      if (mirror === "single1" || mirror === "single-screen-upper") return off;
-      if (mirror === "four" || mirror === "fourscreen") return a & 0x7FF; 
+      if (mirror === "single1" || mirror === "single-screen-upper") return 0x400 + off;
+      if (mirror === "four" || mirror === "fourscreen") return a; 
       return (((nt >> 1) & 1) * 0x400) + off; 
     }
     ppuRead(addr) { addr &= 0x3fff; if (addr < 0x2000) return this.mapper.chrRead(addr); if (addr < 0x3f00) return this.vram[this.ntIndex(addr)]; let palAddr = addr & 0x1f; if ((palAddr & 3) === 0) palAddr &= 0x0F; return this.palette[palAddr]; }
@@ -1616,10 +1620,10 @@ class Mapper3 extends Mapper {
     copyY() { this.v = (this.v & ~0x7be0) | (this.t & 0x7be0); }
     bgFetch() { const nt = 0x2000 | (this.v & 0x0fff); const at = 0x23c0 | (this.v & 0x0c00) | ((this.v >> 4) & 0x38) | ((this.v >> 2) & 0x07); const fineY = (this.v >> 12) & 7; const tile = this.ppuRead(nt); const attr = this.ppuRead(at); const coarseX = this.v & 0x1F; const coarseY = (this.v >> 5) & 0x1F; const shift = ((coarseY & 2) << 1) | (coarseX & 2); const pal = (attr >> shift) & 3; const base = (this.ctrl & 0x10) ? 0x1000 : 0x0000; const addr = base + tile * 16 + fineY; const lo = this.ppuRead(addr); const hi = this.ppuRead(addr + 8); return { lo, hi, pal }; }
     reloadShifters() { this.bgShiftLo = (this.bgShiftLo & 0xFF00) | this.bgLatch.lo; this.bgShiftHi = (this.bgShiftHi & 0xFF00) | this.bgLatch.hi; const attrLo = (this.bgLatch.pal & 1) ? 0xFF : 0x00; const attrHi = (this.bgLatch.pal & 2) ? 0xFF : 0x00; this.bgAttrShiftLo = (this.bgAttrShiftLo & 0xFF00) | attrLo; this.bgAttrShiftHi = (this.bgAttrShiftHi & 0xFF00) | attrHi; }
-    evalSprites() { const y = this.scanline; this.spriteCount = 0; this.spriteZeroInLine = false; for (let i = 0; i < 64; i++) { const o = i * 4; const sy = this.oam[o]; const tile = this.oam[o + 1]; const attr = this.oam[o + 2]; const sx = this.oam[o + 3]; const h = (this.ctrl & 0x20) ? 16 : 8; const row = y - sy; if (row >= 0 && row < h && this.spriteCount < 8) { if (i === 0) this.spriteZeroInLine = true; this.secOAM[this.spriteCount * 4 + 0] = sy; this.secOAM[this.spriteCount * 4 + 1] = tile; this.secOAM[this.spriteCount * 4 + 2] = attr; this.secOAM[this.spriteCount * 4 + 3] = sx; this.spriteCount++; if (this.spriteCount === 8) { this.status |= 0x20; break; } } } }
+    evalSprites() { const y = this.scanline; this.spriteCount = 0; this.spriteZeroInLine = false; for (let i = 0; i < 32; i++) { this.secOAM[i] = 0xFF; } for (let i = 0; i < 64; i++) { const o = i * 4; const sy = this.oam[o]; if (sy >= 0xEF) continue; const tile = this.oam[o + 1]; const attr = this.oam[o + 2]; const sx = this.oam[o + 3]; const h = (this.ctrl & 0x20) ? 16 : 8; const row = y - sy; if (row >= 0 && row < h) { if (this.spriteCount < 8) { if (i === 0) this.spriteZeroInLine = true; this.secOAM[this.spriteCount * 4 + 0] = sy; this.secOAM[this.spriteCount * 4 + 1] = tile; this.secOAM[this.spriteCount * 4 + 2] = attr; this.secOAM[this.spriteCount * 4 + 3] = sx; this.spriteCount++; } else { this.status |= 0x20; } } } }
     renderPixel(x, y) {
       const idx = (y * 256 + x) * 4; const img = this.output.data; let bgPx = 0, bgPal = 0; let spriteOpaque = false, spritePriority = 0, spritePx = 0, spritePal = 0; let sprite0 = false;
-      if (this.mask & 0x08) { const bitMux = 15 - this.x; const p0 = (this.bgShiftLo >> bitMux) & 1; const p1 = (this.bgShiftHi >> bitMux) & 1; bgPx = (p1 << 1) | p0; const a0 = (this.bgAttrShiftLo >> bitMux) & 1; const a1 = (this.bgAttrShiftHi >> bitMux) & 1; bgPal = (a1 << 1) | a0; }
+      if (this.mask & 0x08) { const bitMux = 15 - this.fineXLatch; const p0 = (this.bgShiftLo >> bitMux) & 1; const p1 = (this.bgShiftHi >> bitMux) & 1; bgPx = (p1 << 1) | p0; const a0 = (this.bgAttrShiftLo >> bitMux) & 1; const a1 = (this.bgAttrShiftHi >> bitMux) & 1; bgPal = (a1 << 1) | a0; }
       if (this.mask & 0x10) { for (let i = 0; i < this.spriteCount; i++) { const o = i * 4; const sy = this.secOAM[o]; const tile = this.secOAM[o + 1]; const attr = this.secOAM[o + 2]; const sx = this.secOAM[o + 3]; if (x < sx || x >= sx + 8) continue; const h = (this.ctrl & 0x20) ? 16 : 8; const row = y - sy; if (row < 0 || row >= h) continue; if (i === 0 && this.spriteZeroInLine) sprite0 = true; const flipV = (attr >> 7) & 1; const flipH = (attr >> 6) & 1; spritePriority = (attr >> 5) & 1; const paletteIdx = (attr & 3); let fineY = flipV ? (h - 1 - row) : row; let tileNum = tile; let base = 0; if (h === 16) { base = (tile & 1) ? 0x1000 : 0x0000; tileNum = tile & 0xFE; if (fineY >= 8) { tileNum++; fineY -= 8; } } else { base = (this.ctrl & 0x08) ? 0x1000 : 0x0000; } const addr = base + tileNum * 16 + fineY; const lo = this.ppuRead(addr); const hi = this.ppuRead(addr + 8); const bit = flipH ? (x - sx) : (7 - (x - sx)); const p0 = (lo >> bit) & 1; const p1 = (hi >> bit) & 1; spritePx = (p1 << 1) | p0; if (spritePx !== 0) { spriteOpaque = true; spritePal = paletteIdx; break; } } }
       if (sprite0 && spriteOpaque && bgPx !== 0) { if (x < 255 && x >= 8) { const bgOn = (this.mask & 0x08) !== 0; const sprOn = (this.mask & 0x10) !== 0; if (bgOn && sprOn) this.status |= 0x40; } else if (x < 255) { const leftBgOn = (this.mask & 0x02) !== 0; const leftSprOn = (this.mask & 0x04) !== 0; if ((this.mask & 0x08) && (this.mask & 0x10) && leftBgOn && leftSprOn) { this.status |= 0x40; } } }
       let paletteIndex = 0; const bgOpaque = bgPx !== 0; const sprOpaque = spriteOpaque && spritePx !== 0;
@@ -1632,11 +1636,14 @@ class Mapper3 extends Mapper {
       const renderingEnabled = (this.mask & 0x18) !== 0;
       if (this.scanline === 261 && this.cycle === 339 && renderingEnabled && this.oddFrame) { this.cycle = 0; this.scanline = 0; this.frame++; this.oddFrame = false; return; }
       if (this.scanline === 261) {
+        if (this.cycle === 0 && renderingEnabled) this.fineXLatch = this.x;
         if (this.cycle === 1) { this.status &= ~(0x80 | 0x40 | 0x20); this.nmi = false; }
+        if (this.cycle === 257 && renderingEnabled) this.copyX();
         if (this.cycle >= 280 && this.cycle <= 304 && renderingEnabled) this.copyY();
         if (this.cycle >= 321 && this.cycle <= 336 && renderingEnabled) { this.bgShiftLo <<= 1; this.bgShiftHi <<= 1; this.bgAttrShiftLo <<= 1; this.bgAttrShiftHi <<= 1; const cycleInTile = (this.cycle - 1) % 8; if (cycleInTile === 1) this.bgLatch = this.bgFetch(); if (cycleInTile === 0 && this.cycle > 321) this.reloadShifters(); if (cycleInTile === 7) this.incCoarseX(); }
       }
       if (this.scanline >= 0 && this.scanline < 240) {
+        if (this.cycle === 0 && renderingEnabled) this.fineXLatch = this.x;
         if (this.cycle === 1 && renderingEnabled) this.evalSprites();
         if (this.cycle >= 1 && this.cycle <= 256) {
           if (renderingEnabled) { this.bgShiftLo <<= 1; this.bgShiftHi <<= 1; this.bgAttrShiftLo <<= 1; this.bgAttrShiftHi <<= 1; }
@@ -1875,7 +1882,7 @@ class CPU6502{
         ppu: { ctrl: this.ppu.ctrl, mask: this.ppu.mask, status: this.ppu.status, oamAddr: this.ppu.oamAddr, v: this.ppu.v, t: this.ppu.t, x: this.ppu.x, w: this.ppu.w, cycle: this.ppu.cycle, scanline: this.ppu.scanline, vram: Array.from(this.ppu.vram), oam: Array.from(this.ppu.oam), palette: Array.from(this.ppu.palette) },
         apu: { frameCounter: this.apu.frameCounter, frameMode: this.apu.frameMode, pulse1: Object.assign({}, this.apu.pulse1), pulse2: Object.assign({}, this.apu.pulse2), triangle: Object.assign({}, this.apu.triangle), noise: Object.assign({}, this.apu.noise), dmc: Object.assign({}, this.apu.dmc) },
         bus: { ram: Array.from(this.bus.ram) },
-        mapper: this.cart.mapper === 4 ? { type: 4, targetReg: this.cart.mapperObj.targetReg, prgMode: this.cart.mapperObj.prgMode, chrMode: this.cart.mapperObj.chrMode, regs: Array.from(this.cart.mapperObj.regs), irqLatch: this.cart.mapperObj.irqLatch, irqCounter: this.cart.mapperObj.irqCounter, irqEnable: this.cart.mapperObj.irqEnable } : this.cart.mapper === 1 ? { type: 1, shiftReg: this.cart.mapperObj.shiftReg, control: this.cart.mapperObj.control, chrBank0: this.cart.mapperObj.chrBank0, chrBank1: this.cart.mapperObj.chrBank1, prgBank: this.cart.mapperObj.prgBank } : this.cart.mapper === 2 ? { type: 2, prgBank: this.cart.mapperObj.prgBank } : this.cart.mapper === 3 ? { type: 3, chrBank: this.cart.mapperObj.chrBank } : { type: this.cart.mapper }
+        mapper: this.cart.mapper === 4 ? { type: 4, bankSelect: this.cart.mapperObj.bankSelect, bankData: Array.from(this.cart.mapperObj.bankData), prgMode: this.cart.mapperObj.prgMode, chrMode: this.cart.mapperObj.chrMode, irqLatch: this.cart.mapperObj.irqLatch, irqCounter: this.cart.mapperObj.irqCounter, irqEnable: this.cart.mapperObj.irqEnable, irqReloadPending: this.cart.mapperObj.irqReloadPending, prgBanks: Array.from(this.cart.mapperObj.prgBanks), chrBanks: Array.from(this.cart.mapperObj.chrBanks) } : this.cart.mapper === 1 ? { type: 1, shiftReg: this.cart.mapperObj.shiftReg, control: this.cart.mapperObj.control, chrBank0: this.cart.mapperObj.chrBank0, chrBank1: this.cart.mapperObj.chrBank1, prgBank: this.cart.mapperObj.prgBank } : this.cart.mapper === 2 ? { type: 2, prgBank: this.cart.mapperObj.prgBank } : this.cart.mapper === 3 ? { type: 3, chrBank: this.cart.mapperObj.chrBank } : { type: this.cart.mapper }
       };
     }
     deserializeState(state) {
@@ -1886,7 +1893,7 @@ class CPU6502{
       this.apu.frameCounter = state.apu.frameCounter; this.apu.frameMode = state.apu.frameMode;
       Object.assign(this.apu.pulse1, state.apu.pulse1); Object.assign(this.apu.pulse2, state.apu.pulse2); Object.assign(this.apu.triangle, state.apu.triangle); Object.assign(this.apu.noise, state.apu.noise); Object.assign(this.apu.dmc, state.apu.dmc);
       this.bus.ram.set(state.bus.ram);
-      if (state.mapper.type === 4 && this.cart.mapperObj instanceof Mapper4) { this.cart.mapperObj.targetReg = state.mapper.targetReg; this.cart.mapperObj.prgMode = state.mapper.prgMode; this.cart.mapperObj.chrMode = state.mapper.chrMode; this.cart.mapperObj.regs.set(state.mapper.regs); this.cart.mapperObj.irqLatch = state.mapper.irqLatch; this.cart.mapperObj.irqCounter = state.mapper.irqCounter; this.cart.mapperObj.irqEnable = state.mapper.irqEnable; }
+      if (state.mapper.type === 4 && this.cart.mapperObj instanceof Mapper4) { this.cart.mapperObj.bankSelect = state.mapper.bankSelect; this.cart.mapperObj.bankData.set(state.mapper.bankData); this.cart.mapperObj.prgMode = state.mapper.prgMode; this.cart.mapperObj.chrMode = state.mapper.chrMode; this.cart.mapperObj.irqLatch = state.mapper.irqLatch; this.cart.mapperObj.irqCounter = state.mapper.irqCounter; this.cart.mapperObj.irqEnable = state.mapper.irqEnable; this.cart.mapperObj.irqReloadPending = state.mapper.irqReloadPending; this.cart.mapperObj.prgBanks.set(state.mapper.prgBanks); this.cart.mapperObj.chrBanks.set(state.mapper.chrBanks); this.cart.mapperObj.cpu = this.cpu; this.cart.mapperObj.ppu = this.ppu; }
       else if (state.mapper.type === 1 && this.cart.mapperObj instanceof Mapper1) { this.cart.mapperObj.shiftReg = state.mapper.shiftReg; this.cart.mapperObj.control = state.mapper.control; this.cart.mapperObj.chrBank0 = state.mapper.chrBank0; this.cart.mapperObj.chrBank1 = state.mapper.chrBank1; this.cart.mapperObj.prgBank = state.mapper.prgBank; }
       else if (state.mapper.type === 2 && this.cart.mapperObj instanceof Mapper2) { this.cart.mapperObj.prgBank = state.mapper.prgBank; }
       else if (state.mapper.type === 3 && this.cart.mapperObj instanceof Mapper3) { this.cart.mapperObj.chrBank = state.mapper.chrBank; }
