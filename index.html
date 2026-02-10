@@ -764,7 +764,10 @@
   <script>
 (() => {
   const BUILD = new Date().toISOString().replace('T',' ').slice(0,19);
-
+  // === ALLOW WEB APP FUNCTION === 
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js');
+  }
 
   // ===== GLOBAL SETTINGS OBJECT =====
   const Settings = {
