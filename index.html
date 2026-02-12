@@ -255,45 +255,54 @@
       left: 0; 
       width: 100%; 
       height: 100%; 
-      background: rgba(0,0,0,0.85); 
+      background: rgba(5, 5, 5, 0.95); 
       z-index: 2000; 
       align-items: center; 
       justify-content: center; 
-      backdrop-filter: blur(4px); 
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
     }
     .settings-modal.active { display: flex; }
     .settings-container { 
-      background: var(--card); 
-      border: 1px solid rgba(255,255,255,0.1); 
+      background: var(--glass); 
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid var(--glass-border); 
       border-radius: 16px; 
       width: 90%; 
       max-width: 600px; 
-      max-height: 80vh; 
+      max-height: 85vh; 
       overflow: hidden; 
-      box-shadow: 0 20px 50px rgba(0,0,0,0.5); 
+      box-shadow: 0 20px 60px rgba(0,0,0,0.6); 
       display: flex; 
       flex-direction: column; 
     }
     .settings-header { 
-      background: rgba(255,255,255,0.03); 
-      padding: 16px 20px; 
-      font-size: 18px; 
+      background: rgba(255,255,255,0.05); 
+      padding: 18px 24px; 
+      font-size: 20px; 
       font-weight: 600; 
-      border-bottom: 1px solid rgba(255,255,255,0.05); 
-      color: var(--acc); 
+      border-bottom: 1px solid var(--glass-border); 
+      color: var(--fg); 
       display: flex; 
       justify-content: space-between; 
       align-items: center; 
     }
     .settings-close { 
       cursor: pointer; 
-      color: var(--muted); 
-      font-size: 28px; 
+      color: var(--text-muted); 
+      font-size: 32px; 
       padding: 0 4px; 
       line-height: 1; 
-      transition: color 0.2s;
+      transition: all 0.2s;
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 6px;
     }
-    .settings-close:hover { color: var(--acc); }
+    .settings-close:hover { color: var(--acc); background: rgba(255,255,255,0.05); }
     .settings-body { 
       flex: 1; 
       padding: 24px; 
@@ -304,100 +313,171 @@
     }
     .setting-section { margin-bottom: 32px; }
     .section-title { 
-      font-size: 14px; 
+      font-size: 12px; 
       font-weight: 600; 
-      color: var(--acc); 
-      margin-bottom: 16px; 
+      color: var(--muted); 
+      margin-bottom: 12px; 
       text-transform: uppercase; 
-      letter-spacing: 0.5px; 
+      letter-spacing: 0.8px; 
       display: flex; 
       align-items: center; 
-      gap: 8px; 
+      gap: 8px;
+      padding-left: 4px;
     }
-    .section-icon { font-size: 18px; }
+    .section-icon { font-size: 16px; }
     .setting-row { 
       display: flex; 
       align-items: center; 
       justify-content: space-between; 
-      padding: 12px 0; 
-      border-bottom: 1px solid rgba(255,255,255,0.05); 
+      padding: 14px 16px; 
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 10px;
+      margin-bottom: 8px;
+      transition: background 0.2s, border-color 0.2s;
     }
-    .setting-row:last-child { border-bottom: none; }
-    .setting-label { font-size: 14px; color: var(--fg); }
+    .setting-row:hover { background: rgba(255,255,255,0.06); border-color: rgba(255,255,255,0.1); }
+    .setting-row:last-child { margin-bottom: 0; }
+    .setting-label { font-size: 15px; color: var(--fg); font-weight: 500; }
     .setting-description { font-size: 12px; color: var(--muted); margin-top: 4px; }
     .toggle-switch { 
       position: relative; 
-      width: 44px; 
-      height: 24px; 
+      width: 48px; 
+      height: 28px; 
       background: rgba(255,255,255,0.1); 
-      border-radius: 12px; 
+      border: 1px solid rgba(255,255,255,0.15);
+      border-radius: 14px; 
       cursor: pointer; 
-      transition: background 0.2s; 
+      transition: all 0.2s; 
       flex-shrink: 0; 
     }
-    .toggle-switch.active { background: var(--acc); }
+    .toggle-switch.active { background: var(--acc); border-color: var(--acc); }
     .toggle-knob { 
       position: absolute; 
-      top: 3px; 
-      left: 3px; 
-      width: 18px; 
-      height: 18px; 
-      background: white; 
+      top: 2px; 
+      left: 2px; 
+      width: 22px; 
+      height: 22px; 
+      background: rgba(255,255,255,0.6); 
       border-radius: 50%; 
-      transition: transform 0.2s; 
+      transition: all 0.2s;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
     }
-    .toggle-switch.active .toggle-knob { transform: translateX(20px); }
+    .toggle-switch.active .toggle-knob { transform: translateX(20px); background: #000; }
     input[type="range"] { 
       width: 120px; 
-      height: 4px; 
+      height: 6px; 
       background: rgba(255,255,255,0.1); 
-      border-radius: 2px; 
+      border-radius: 3px; 
       outline: none; 
-      -webkit-appearance: none; 
+      -webkit-appearance: none;
+      cursor: pointer;
     }
     input[type="range"]::-webkit-slider-thumb { 
       -webkit-appearance: none; 
-      width: 16px; 
-      height: 16px; 
+      width: 18px; 
+      height: 18px; 
       background: var(--acc); 
       border-radius: 50%; 
-      cursor: pointer; 
+      cursor: pointer;
+      box-shadow: 0 2px 6px rgba(115, 215, 255, 0.4);
+      transition: transform 0.1s;
     }
+    input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.1); }
     input[type="range"]::-moz-range-thumb { 
-      width: 16px; 
-      height: 16px; 
+      width: 18px; 
+      height: 18px; 
       background: var(--acc); 
       border-radius: 50%; 
       cursor: pointer; 
       border: none;
+      box-shadow: 0 2px 6px rgba(115, 215, 255, 0.4);
     }
     input[type="text"], input[type="url"], input[type="file"] { 
       background: rgba(255,255,255,0.05); 
-      border: 1px solid rgba(255,255,255,0.1); 
+      border: 1px solid var(--glass-border); 
       color: var(--fg); 
-      padding: 10px 12px; 
-      border-radius: 8px; 
-      font-size: 13px; 
+      padding: 12px 14px; 
+      border-radius: 10px; 
+      font-size: 14px; 
       width: 100%; 
-      box-sizing: border-box; 
+      box-sizing: border-box;
+      font-family: inherit;
+      outline: none;
+      transition: all 0.2s;
     }
     input[type="text"]:focus, input[type="url"]:focus { 
-      outline: none; 
       border-color: var(--acc); 
+      background: rgba(255,255,255,0.08);
+      box-shadow: 0 0 0 3px rgba(115, 215, 255, 0.1);
     }
     .btn-primary { 
       background: var(--acc); 
       color: #000; 
-      border: none; 
-      padding: 10px 20px; 
-      border-radius: 8px; 
-      font-size: 13px; 
+      border: 1px solid var(--acc); 
+      padding: 11px 20px; 
+      border-radius: 10px; 
+      font-size: 14px; 
       font-weight: 600; 
       cursor: pointer; 
-      transition: opacity 0.2s; 
+      transition: all 0.2s;
+      font-family: inherit;
     }
-    .btn-primary:hover { opacity: 0.9; }
-    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-primary:hover { background: #8ae0ff; border-color: #8ae0ff; }
+    .btn-primary:active { transform: scale(0.98); }
+    .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-primary:disabled:hover { background: var(--acc); border-color: var(--acc); }
+    .btn-secondary {
+      background: var(--glass);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      color: var(--fg);
+      border: 1px solid var(--glass-border);
+      padding: 11px 20px;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      font-family: inherit;
+    }
+    .btn-secondary:hover { background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.2); }
+    .btn-secondary:active { transform: scale(0.98); }
+    .btn-secondary:disabled { opacity: 0.4; cursor: not-allowed; }
+    .speed-display {
+      font-size: 13px;
+      color: var(--acc);
+      font-weight: 600;
+      min-width: 45px;
+      text-align: center;
+    }
+    .button-group {
+      display: flex;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .button-group button {
+      flex: 1;
+    }
+    .status-message {
+      margin-top: 12px;
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+    }
+    .success-message {
+      background: rgba(115, 215, 255, 0.15);
+      color: var(--acc);
+      border: 1px solid rgba(115, 215, 255, 0.3);
+    }
+    .error-message {
+      background: rgba(255, 100, 100, 0.15);
+      color: #ff8080;
+      border: 1px solid rgba(255, 100, 100, 0.3);
+    }
     .btn-secondary { 
       background: rgba(255,255,255,0.1); 
       color: var(--fg); 
@@ -598,9 +678,13 @@
   <div class="ui-layer">
     
     <div class="top-bar">
-      <label for="romInput" class="icon-btn" title="Load ROM">📂</label>
+      <label for="romInput" class="icon-btn" title="Load ROM">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+      </label>
       <input type="file" id="romInput" accept=".nes" style="display:none;">
-      <div class="icon-btn" id="btnSettings" title="Settings">⚙</div>
+      <div class="icon-btn" id="btnSettings" title="Settings">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+      </div>
     </div>
 
     <div class="controls-area" id="controls">
@@ -629,14 +713,14 @@
   <div class="settings-modal" id="settingsModal">
     <div class="settings-container">
       <div class="settings-header">
-        ⚙️ Settings
+        Settings
         <span class="settings-close" onclick="closeSettings()">×</span>
       </div>
       <div class="settings-body">
         
         <!-- ROM Loading -->
         <div class="setting-section">
-          <div class="section-title"><span class="section-icon">💾</span> ROM Loading</div>
+          <div class="section-title">ROM Loading</div>
           <div class="setting-row">
             <div>
               <div class="setting-label">Load ROM File</div>
@@ -657,7 +741,7 @@
 
         <!-- Audio Settings -->
         <div class="setting-section">
-          <div class="section-title"><span class="section-icon">🔊</span> Audio</div>
+          <div class="section-title">Audio</div>
           <div class="setting-row">
             <div class="setting-label">Enable Audio</div>
             <div class="toggle-switch active" id="toggleAudioEnabled">
@@ -675,7 +759,7 @@
 
         <!-- Input Settings -->
         <div class="setting-section">
-          <div class="section-title"><span class="section-icon">🎮</span> Input</div>
+          <div class="section-title">Input</div>
           <div class="setting-row">
             <div>
               <div class="setting-label">Keyboard</div>
@@ -699,7 +783,7 @@
               <div class="setting-label">Gamepad</div>
               <div class="setting-description">Physical controller support</div>
             </div>
-            <div class="toggle-switch active" id="toggleGamepad">
+            <div class="toggle-switch" id="toggleGamepad">
               <div class="toggle-knob"></div>
             </div>
           </div>
@@ -707,7 +791,7 @@
 
         <!-- Display Settings -->
         <div class="setting-section">
-          <div class="section-title"><span class="section-icon">🖥️</span> Display</div>
+          <div class="section-title">Display</div>
           <div class="setting-row">
             <div>
               <div class="setting-label">Integer Scaling</div>
@@ -730,7 +814,7 @@
 
         <!-- Emulation Settings -->
         <div class="setting-section">
-          <div class="section-title"><span class="section-icon">⚡</span> Emulation</div>
+          <div class="section-title">Emulation</div>
           <div class="setting-row">
             <div class="setting-label">Emulation Speed</div>
             <div style="display: flex; align-items: center; gap: 12px;">
@@ -746,7 +830,7 @@
 
         <!-- Save States -->
         <div class="setting-section">
-          <div class="section-title"><span class="section-icon">💾</span> Save States</div>
+          <div class="section-title">Save States</div>
           <div class="setting-row" style="flex-direction: column; align-items: stretch;">
             <div class="button-group">
               <button class="btn-primary" id="btnExportState" disabled>Export State</button>
@@ -771,7 +855,7 @@
 
   // ===== GLOBAL SETTINGS OBJECT =====
   const Settings = {
-    input: { keyboard: true, touch: true, gamepad: false },
+    input: { keyboard: true, touch: true, gamepad: true },
     audio: { enabled: true, volume: 0.5 },
     display: { integerScale: true, scanlines: false },
     emulation: { speed: 1 }
@@ -1705,24 +1789,15 @@ class CPU6502{
       this.pc=lo|(hi<<8); 
       this.cycles+=7; 
       
-      // ===== CRITICAL: Do NOT clear irqLine here! =====
-      // IRQ is LEVEL-triggered. The line stays asserted until the IRQ source (mapper, APU)
-      // explicitly clears it. If we clear it here, the IRQ becomes edge-triggered (wrong).
-      // The mapper/APU must deassert the line when appropriate.
     }
     
     step(){ 
-      // Handle CPU stall cycles (e.g., from DMA)
+  
       if(this.stall>0){ this.stall--; this.cycles++; return 1; }
-      
-      // ===== CRITICAL: Check IRQ at instruction boundary (level-triggered) =====
-      // IRQ is sampled BETWEEN instructions, not during them.
-      // If irqLine is asserted AND I flag is clear, service the interrupt.
-      // The IRQ line remains asserted until the source clears it.
+     
       if(this.irqLine && !this.getI()){ 
         this.irq(); 
-        // NOTE: irqLine is NOT cleared here - it's level-triggered
-        // The interrupt source (mapper, APU) must clear it
+      
       }
       
       const op=this.read(this.pc++); const e = OPCODES[op]; if(!e){ return 2; }
@@ -1786,8 +1861,8 @@ class CPU6502{
       }
     }
   }
-  // ===== Helper Functions =====
-  
+ 
+  // ===== Helper Functions ===== 
   const O = (mode, ins, cyc) => ({mode, ins, cyc});
   const OPCODES = new Array(256);
   const fill = (list)=>list.forEach(([op,mode,ins,cyc])=>OPCODES[op]=O(mode,ins,cyc));
@@ -1911,7 +1986,7 @@ class CPU6502{
       e.preventDefault();
       e.stopPropagation();
       setBtnState(btn, true);
-      // FIXED: changed nes.controllers to nes.input
+    
       if(buttonName && nes.input && Settings.input.touch) {
         nes.input.setButton(0, buttonName, true);
       }
@@ -1921,7 +1996,7 @@ class CPU6502{
       e.preventDefault();
       e.stopPropagation();
       setBtnState(btn, false);
-      // FIXED: changed nes.controllers to nes.input
+      
       if(buttonName && nes.input && Settings.input.touch) {
         nes.input.setButton(0, buttonName, false);
       }
@@ -1930,7 +2005,7 @@ class CPU6502{
     btn.addEventListener('touchcancel', (e) => {
       if(e) e.preventDefault();
       setBtnState(btn, false);
-      // FIXED: changed nes.controllers to nes.input
+     
       if(buttonName && nes.input && Settings.input.touch) {
         nes.input.setButton(0, buttonName, false);
       }
@@ -1938,11 +2013,7 @@ class CPU6502{
   });
 
   const canvas = document.getElementById('screen');
-  
-  // 2. Initialize NES
   const nes = new NES(canvas);
-  
-  // Expose NES for debugging/global access if needed
   window.nes = nes;
 
   window.addEventListener('touchmove', function(e){
@@ -1952,7 +2023,7 @@ class CPU6502{
   }, {passive:false});
   
   const triggerHaptic = (button) => {
-    // Try standard Vibration API (Chrome, Firefox Android, Edge, Opera Mobile)
+    // Vibration API 
     if (navigator.vibrate) {
       try {
         navigator.vibrate(10);
@@ -2070,29 +2141,27 @@ class CPU6502{
     }
   });
 
-  // ===== SMART GAMEPAD AUTO-INPUT MAPPING =====
-  // Comprehensive gamepad support with auto-detection for mobile and desktop
+  // ===== GAMEPAD MAPPING =====
   const GamepadManager = {
     gamepads: {},
     buttonStates: {},
     axisStates: {},
     deadzone: 0.3,
     
-    // Standard gamepad button mapping (works for most controllers)
+
     standardMapping: {
-      0: 'b',      // A/Cross
-      1: 'a',      // B/Circle  
-      2: 'b',      // X/Square
-      3: 'a',      // Y/Triangle
-      8: 'select', // Select/Share
-      9: 'start',  // Start/Options
-      12: 'up',    // D-pad Up
-      13: 'down',  // D-pad Down
-      14: 'left',  // D-pad Left
-      15: 'right'  // D-pad Right
+      0: 'b',      
+      1: 'a',      
+      2: 'b',      
+      3: 'a',     
+      8: 'select', 
+      9: 'start',  
+      12: 'up',    
+      13: 'down',  
+      14: 'left',  
+      15: 'right'  
     },
     
-    // Alternative mapping for non-standard controllers
     alternativeMapping: {
       0: 'a',
       1: 'b',
@@ -2106,7 +2175,7 @@ class CPU6502{
       15: 'right'
     },
     
-    // Mobile-specific mappings (iOS, Android gamepads)
+    
     mobileMapping: {
       0: 'a',
       1: 'b',
@@ -2126,17 +2195,12 @@ class CPU6502{
     
     init() {
       if (!navigator.getGamepads) {
-        console.log('Gamepad API not supported');
         return;
       }
       
-      // Detect mobile vs desktop
       this.isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-      
-      // Use appropriate mapping based on platform
       this.activeMapping = this.isMobile ? this.mobileMapping : this.standardMapping;
       
-      // Listen for gamepad connection
       window.addEventListener('gamepadconnected', (e) => {
         this.onGamepadConnected(e.gamepad);
       });
@@ -2145,24 +2209,27 @@ class CPU6502{
         this.onGamepadDisconnected(e.gamepad);
       });
       
-      // Start polling loop
-      this.startPolling();
+    
+      setTimeout(() => {
+        const gamepads = navigator.getGamepads();
+        for (let i = 0; i < gamepads.length; i++) {
+          if (gamepads[i] && !this.gamepads[i]) {
+            this.onGamepadConnected(gamepads[i]);
+          }
+        }
+      }, 100);
       
-      console.log('Gamepad Manager initialized (' + (this.isMobile ? 'Mobile' : 'Desktop') + ' mode)');
+      this.startPolling();
     },
     
     onGamepadConnected(gamepad) {
-      console.log('Gamepad connected:', gamepad.id, 'Index:', gamepad.index);
       this.gamepads[gamepad.index] = gamepad;
       this.buttonStates[gamepad.index] = {};
       this.axisStates[gamepad.index] = {};
-      
-      // Auto-detect controller type and adjust mapping
       this.detectControllerType(gamepad);
     },
     
     onGamepadDisconnected(gamepad) {
-      console.log('Gamepad disconnected:', gamepad.id);
       delete this.gamepads[gamepad.index];
       delete this.buttonStates[gamepad.index];
       delete this.axisStates[gamepad.index];
@@ -2171,30 +2238,19 @@ class CPU6502{
     detectControllerType(gamepad) {
       const id = gamepad.id.toLowerCase();
       
-      // Xbox controllers
-      if (id.includes('xbox') || id.includes('xinput')) {
-        console.log('Detected Xbox controller');
+      if (id.includes('xbox') || id.includes('xinput') || id.includes('045e') || id.includes('x-box')) {
         this.activeMapping = this.standardMapping;
       }
-      // PlayStation controllers
-      else if (id.includes('playstation') || id.includes('dualshock') || id.includes('dualsense')) {
-        console.log('Detected PlayStation controller');
+      else if (id.includes('playstation') || id.includes('dualshock') || id.includes('dualsense') || id.includes('054c')) {
         this.activeMapping = this.standardMapping;
       }
-      // Nintendo controllers
-      else if (id.includes('nintendo') || id.includes('pro controller') || id.includes('joy-con')) {
-        console.log('Detected Nintendo controller');
-        // Nintendo uses swapped A/B positions
+      else if (id.includes('nintendo') || id.includes('pro controller') || id.includes('joy-con') || id.includes('057e')) {
         this.activeMapping = this.alternativeMapping;
       }
-      // Mobile gamepads
       else if (this.isMobile) {
-        console.log('Using mobile gamepad mapping');
         this.activeMapping = this.mobileMapping;
       }
-      // Generic/Unknown
       else {
-        console.log('Using standard mapping for:', gamepad.id);
         this.activeMapping = this.standardMapping;
       }
     },
@@ -2216,13 +2272,8 @@ class CPU6502{
         const gamepad = gamepads[i];
         if (!gamepad) continue;
         
-        // Update stored gamepad reference
         this.gamepads[i] = gamepad;
-        
-        // Process buttons
         this.processButtons(gamepad);
-        
-        // Process analog sticks as D-pad
         this.processAxes(gamepad);
       }
     },
@@ -2239,17 +2290,17 @@ class CPU6502{
         const pressed = button.pressed;
         const wasPressed = this.buttonStates[index][i] || false;
         
-        // Button state changed
+   
         if (pressed !== wasPressed) {
           this.buttonStates[index][i] = pressed;
           
-          // Map to NES button
+
           const nesButton = this.activeMapping[i];
           if (nesButton) {
             const element = document.querySelector(`[data-button="${nesButton}"]`);
             setBtnState(element, pressed);
             
-            // Send to emulator
+            
             if (nes.input) {
               nes.input.setButton(0, nesButton, pressed);
             }
@@ -2265,42 +2316,59 @@ class CPU6502{
         this.axisStates[index] = { up: false, down: false, left: false, right: false };
       }
       
-      // Left stick (axes 0 and 1)
+     
       const leftX = gamepad.axes[0] || 0;
       const leftY = gamepad.axes[1] || 0;
+      const rightX = gamepad.axes[2] || 0;
+      const rightY = gamepad.axes[3] || 0;
       
-      // Apply deadzone
-      const horizontal = Math.abs(leftX) > this.deadzone ? leftX : 0;
-      const vertical = Math.abs(leftY) > this.deadzone ? leftY : 0;
+     
+      const dpad1X = gamepad.axes[6] || 0;
+      const dpad1Y = gamepad.axes[7] || 0;
+      const dpad2X = gamepad.axes[9] || 0;
+      const dpad2Y = gamepad.axes[10] || 0;
       
-      // Map axes to directions
-      const directions = {
-        left: horizontal < -this.deadzone,
-        right: horizontal > this.deadzone,
-        up: vertical < -this.deadzone,
-        down: vertical > this.deadzone
-      };
-      
-      // Check each direction for state changes
-      ['up', 'down', 'left', 'right'].forEach(dir => {
-        const active = directions[dir];
-        const wasActive = this.axisStates[index][dir];
+      const horizontal = 
+        (Math.abs(leftX) > this.deadzone ? leftX : 0) ||
+        (Math.abs(rightX) > this.deadzone ? rightX : 0) ||
+        (Math.abs(dpad1X) > this.deadzone ? dpad1X : 0) ||
+        (Math.abs(dpad2X) > this.deadzone ? dpad2X : 0);
         
-        if (active !== wasActive) {
-          this.axisStates[index][dir] = active;
-          
-          const element = document.querySelector(`[data-button="${dir}"]`);
-          setBtnState(element, active);
-          
-          // Send to emulator
-          if (nes.input) {
-            nes.input.setButton(0, dir, active);
-          }
-        }
-      });
+      const vertical = 
+        (Math.abs(leftY) > this.deadzone ? leftY : 0) ||
+        (Math.abs(rightY) > this.deadzone ? rightY : 0) ||
+        (Math.abs(dpad1Y) > this.deadzone ? dpad1Y : 0) ||
+        (Math.abs(dpad2Y) > this.deadzone ? dpad2Y : 0);
+      
+      
+      const left = horizontal < -this.deadzone;
+      const right = horizontal > this.deadzone;
+      const up = vertical < -this.deadzone;
+      const down = vertical > this.deadzone;
+      
+    
+      this.updateAxisDirection(index, 'left', left);
+      this.updateAxisDirection(index, 'right', right);
+      this.updateAxisDirection(index, 'up', up);
+      this.updateAxisDirection(index, 'down', down);
     },
     
-    // Vibration feedback (if supported)
+    updateAxisDirection(index, dir, active) {
+      if (this.axisStates[index][dir] !== active) {
+        this.axisStates[index][dir] = active;
+        
+        const element = document.querySelector(`[data-button="${dir}"]`);
+        if (element) {
+          setBtnState(element, active);
+        }
+        
+        if (nes && nes.input) {
+          nes.input.setButton(0, dir, active);
+        }
+      }
+    },
+    
+   
     vibrate(duration = 100, weakMagnitude = 0.5, strongMagnitude = 0.5) {
       Object.values(this.gamepads).forEach(gamepad => {
         if (gamepad && gamepad.vibrationActuator) {
@@ -2316,15 +2384,34 @@ class CPU6502{
           }
         }
       });
+    },
+    
+    debug() {
+      const gamepads = navigator.getGamepads();
+      console.log('=== GAMEPAD DEBUG ===');
+      console.log('Gamepad enabled:', Settings.input.gamepad);
+      console.log('nes.input exists:', !!nes.input);
+      
+      for (let i = 0; i < gamepads.length; i++) {
+        const gp = gamepads[i];
+        if (!gp) continue;
+        console.log(`\nGamepad ${i}: ${gp.id}`);
+        console.log('Axes:', gp.axes.map((a, idx) => `[${idx}]:${a.toFixed(2)}`).join(' '));
+        console.log('Buttons pressed:', gp.buttons.map((b, idx) => b.pressed ? idx : null).filter(x => x !== null).join(',') || 'none');
+      }
+      
+      console.log('\nActive mapping:', this.activeMapping);
+      console.log('Registered gamepads:', Object.keys(this.gamepads).length);
+      console.log('====================');
     }
   };
   
-  // Initialize gamepad manager
+  
   GamepadManager.init();
   
-  // Expose for debugging
+ 
   window.GamepadManager = GamepadManager;
-  // ===== END GAMEPAD AUTO-INPUT MAPPING =====
+ 
 
   const gameContainer = document.getElementById('gameContainer');
   const screenWrapper = document.querySelector('.screen-wrapper');
@@ -2426,27 +2513,62 @@ class CPU6502{
   const toggleAudioEnabled = document.getElementById('toggleAudioEnabled');
   const sliderVolume = document.getElementById('sliderVolume');
   const volumeDisplay = document.getElementById('volumeDisplay');
-  if (toggleAudioEnabled) { toggleAudioEnabled.addEventListener('click', () => { Settings.audio.enabled = !Settings.audio.enabled; toggleAudioEnabled.classList.toggle('active', Settings.audio.enabled); }); }
+  if (toggleAudioEnabled) { 
+    toggleAudioEnabled.classList.toggle('active', Settings.audio.enabled);
+    toggleAudioEnabled.addEventListener('click', () => { Settings.audio.enabled = !Settings.audio.enabled; toggleAudioEnabled.classList.toggle('active', Settings.audio.enabled); }); 
+  }
   if (sliderVolume && volumeDisplay) { sliderVolume.addEventListener('input', (e) => { const value = parseInt(e.target.value); Settings.audio.volume = value / 100; volumeDisplay.textContent = value + '%'; }); }
 
   const toggleKeyboard = document.getElementById('toggleKeyboard');
   const toggleTouch = document.getElementById('toggleTouch');
   const toggleGamepad = document.getElementById('toggleGamepad');
-  if (toggleKeyboard) { toggleKeyboard.addEventListener('click', () => { Settings.input.keyboard = !Settings.input.keyboard; toggleKeyboard.classList.toggle('active', Settings.input.keyboard); }); }
-  if (toggleTouch) { toggleTouch.addEventListener('click', () => { Settings.input.touch = !Settings.input.touch; toggleTouch.classList.toggle('active', Settings.input.touch); const controls = document.getElementById('controls'); if(controls) controls.style.display = Settings.input.touch ? '' : 'none'; }); }
-  if (toggleGamepad) { toggleGamepad.addEventListener('click', () => { Settings.input.gamepad = !Settings.input.gamepad; toggleGamepad.classList.toggle('active', Settings.input.gamepad); }); }
+  
+ 
+  if (toggleKeyboard) { 
+    toggleKeyboard.classList.toggle('active', Settings.input.keyboard);
+    toggleKeyboard.addEventListener('click', () => { Settings.input.keyboard = !Settings.input.keyboard; toggleKeyboard.classList.toggle('active', Settings.input.keyboard); }); 
+  }
+  if (toggleTouch) { 
+    toggleTouch.classList.toggle('active', Settings.input.touch);
+    const controls = document.getElementById('controls'); 
+    if(controls) controls.style.display = Settings.input.touch ? '' : 'none';
+    toggleTouch.addEventListener('click', () => { Settings.input.touch = !Settings.input.touch; toggleTouch.classList.toggle('active', Settings.input.touch); if(controls) controls.style.display = Settings.input.touch ? '' : 'none'; }); 
+  }
+  if (toggleGamepad) { 
+    toggleGamepad.classList.toggle('active', Settings.input.gamepad);
+    toggleGamepad.addEventListener('click', () => { 
+      Settings.input.gamepad = !Settings.input.gamepad; 
+      toggleGamepad.classList.toggle('active', Settings.input.gamepad);
+      
+      if (Settings.input.gamepad && navigator.getGamepads) {
+        const gamepads = navigator.getGamepads();
+        for (let i = 0; i < gamepads.length; i++) {
+          if (gamepads[i] && !GamepadManager.gamepads[i]) {
+            GamepadManager.onGamepadConnected(gamepads[i]);
+          }
+        }
+      }
+    }); 
+  }
 
   const toggleIntegerScale = document.getElementById('toggleIntegerScale');
   const toggleScanlines = document.getElementById('toggleScanlines');
   const scanlinesEl = document.getElementById('scanlines');
-  if (toggleIntegerScale) { toggleIntegerScale.addEventListener('click', () => { Settings.display.integerScale = !Settings.display.integerScale; toggleIntegerScale.classList.toggle('active', Settings.display.integerScale); }); }
-  if (toggleScanlines && scanlinesEl) { toggleScanlines.addEventListener('click', () => { Settings.display.scanlines = !Settings.display.scanlines; toggleScanlines.classList.toggle('active', Settings.display.scanlines); scanlinesEl.classList.toggle('active', Settings.display.scanlines); }); }
+  if (toggleIntegerScale) { 
+    toggleIntegerScale.classList.toggle('active', Settings.display.integerScale);
+    toggleIntegerScale.addEventListener('click', () => { Settings.display.integerScale = !Settings.display.integerScale; toggleIntegerScale.classList.toggle('active', Settings.display.integerScale); }); 
+  }
+  if (toggleScanlines && scanlinesEl) { 
+    toggleScanlines.classList.toggle('active', Settings.display.scanlines);
+    scanlinesEl.classList.toggle('active', Settings.display.scanlines);
+    toggleScanlines.addEventListener('click', () => { Settings.display.scanlines = !Settings.display.scanlines; toggleScanlines.classList.toggle('active', Settings.display.scanlines); scanlinesEl.classList.toggle('active', Settings.display.scanlines); }); 
+  }
 
   const sliderSpeed = document.getElementById('sliderSpeed');
   const speedDisplay = document.getElementById('speedDisplay');
   const btnResetEmulator = document.getElementById('btnResetEmulator');
   if (sliderSpeed && speedDisplay) { sliderSpeed.addEventListener('input', (e) => { const value = parseInt(e.target.value); Settings.emulation.speed = value / 100; speedDisplay.textContent = (value / 100).toFixed(1) + 'x'; }); }
-  if (btnResetEmulator) { btnResetEmulator.addEventListener('click', () => { if (nes.cpu) { nes.reset(); btnResetEmulator.textContent = '✓ Reset!'; setTimeout(() => { btnResetEmulator.textContent = 'Reset'; }, 1000); } }); }
+  if (btnResetEmulator) { btnResetEmulator.addEventListener('click', () => { if (nes.cpu) { nes.reset(); btnResetEmulator.textContent = 'Reset!'; setTimeout(() => { btnResetEmulator.textContent = 'Reset'; }, 1000); } }); }
 
   const inputROMUrl = document.getElementById('inputROMUrl');
   const btnFetchROM = document.getElementById('btnFetchROM');
@@ -2500,7 +2622,7 @@ class CPU6502{
         const buffer = await response.arrayBuffer();
         const bytes = new Uint8Array(buffer);
         nes.loadROM(bytes);
-        romUrlStatus.innerHTML = '<div class="success-message">✓ ROM loaded successfully!</div>';
+        romUrlStatus.innerHTML = '<div class="success-message">ROM loaded successfully!</div>';
         setTimeout(() => { closeSettings(); nes.run(); }, 1000);
       } catch (err) { romUrlStatus.innerHTML = `<div class="error-message">Error: ${err.message}</div>`; } finally { btnFetchROM.disabled = false; btnFetchROM.textContent = 'Fetch ROM'; }
     });
@@ -2525,7 +2647,7 @@ class CPU6502{
         const blob = new Blob([JSON.stringify(state)], { type: 'application/json' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a'); a.href = url; a.download = 'savestate.sav'; a.click(); URL.revokeObjectURL(url);
-        if (saveStateStatus) { saveStateStatus.innerHTML = '<div class="success-message">✓ State exported!</div>'; setTimeout(() => { saveStateStatus.innerHTML = ''; }, 3000); }
+        if (saveStateStatus) { saveStateStatus.innerHTML = '<div class="success-message">State exported!</div>'; setTimeout(() => { saveStateStatus.innerHTML = ''; }, 3000); }
       } catch (err) { if (saveStateStatus) { saveStateStatus.innerHTML = `<div class="error-message">Export failed: ${err.message}</div>`; } }
     });
   }
@@ -2536,7 +2658,7 @@ class CPU6502{
       const file = e.target.files[0]; if (!file) return;
       try {
         const text = await file.text(); const state = JSON.parse(text); nes.deserializeState(state);
-        if (saveStateStatus) { saveStateStatus.innerHTML = '<div class="success-message">✓ State loaded!</div>'; setTimeout(() => { saveStateStatus.innerHTML = ''; }, 3000); }
+        if (saveStateStatus) { saveStateStatus.innerHTML = '<div class="success-message">State loaded!</div>'; setTimeout(() => { saveStateStatus.innerHTML = ''; }, 3000); }
       } catch (err) { if (saveStateStatus) { saveStateStatus.innerHTML = `<div class="error-message">Import failed: ${err.message}</div>`; } }
       inputSaveState.value = '';
     });
