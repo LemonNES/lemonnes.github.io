@@ -1749,7 +1749,7 @@ class Mapper3 extends Mapper {
   
 // ===== CPU =====
 class CPU6502{
-    constructor(bus){ this.bus=bus; this.a=0; this.x=0; this.y=0; this.sp=0xFD; this.p=0x24; this.pc=0; this.cycles=0; this.stall=0; this.resetVector=0x8000; this.irqLine=false; }
+    constructor(bus){ this.bus=bus; this.a=0; this.x=0; this.y=0; this.sp=0xFD; this.p=0x24; this.pc=0; this.cycles=0; this.stall=0; this.resetVector=0x8000; this.irqLine=false; this.prevIrqLine = false; }
     getC(){return this.p&1;} setC(v){this.p = (this.p & ~1) | (v&1);} getZ(){return (this.p>>1)&1;} setZ(v){this.p = (this.p & ~2) | ((v?1:0)<<1);} getI(){return (this.p>>2)&1;} setI(v){this.p = (this.p & ~4) | ((v?1:0)<<2);} getD(){return (this.p>>3)&1;} setD(v){this.p = (this.p & ~8) | ((v?1:0)<<3);} getB(){return (this.p>>4)&1;} setB(v){this.p = (this.p & ~16)|((v?1:0)<<4);} getU(){return (this.p>>5)&1;} setU(v){this.p = (this.p & ~32)|((v?1:0)<<5);} getV(){return (this.p>>6)&1;} setV(v){this.p = (this.p & ~64)|((v?1:0)<<6);} getN(){return (this.p>>7)&1;} setN(v){this.p = (this.p & ~128)|((v?1:0)<<7);} 
     read(a){return this.bus.cpuRead(a);} write(a,v){this.bus.cpuWrite(a,v);} 
     push(v){this.write(0x100+this.sp, v); this.sp=u8(this.sp-1);} pop(){this.sp=u8(this.sp+1); return this.read(0x100+this.sp);} 
@@ -1791,10 +1791,12 @@ class CPU6502{
   
       if(this.stall>0){ this.stall--; this.cycles++; return 1; }
      
-      if(this.irqLine && !this.getI()){ 
-        this.irq(); 
-      
-      }
+   
+if (this.irqLine && !this.prevIrqLine && !this.getI()) {
+    this.irq();
+}
+
+this.prevIrqLine = this.irqLine;
       
       const op=this.read(this.pc++); const e = OPCODES[op]; if(!e){ return 2; }
       const {mode, ins, cyc} = e; this.addrMode=mode; this.pageCross=0; const addr = this.fetchAddr(mode);
