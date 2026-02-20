@@ -1116,48 +1116,51 @@
     this.ppu = null; // Reference to PPU for mirroring updates
   }
   
-  writeReg(addr, val) {
-    if (val & 0x80) {
-      this.shift = 0x10;
-      this.ctrl |= 0x0C;
-      return;
-    }
-    
-    const complete = (this.shift & 1);
-    this.shift = (this.shift >> 1) | ((val & 1) << 4);
-    
-    if (complete) {
-      const reg = (addr >> 13) & 3;
-      const data = this.shift & 0x1F;
-      this.shift = 0x10;
-      
-      if (reg === 0) {
+ writeReg(addr, val) {
+  if (val & 0x80) {
+    this.shift = 0x10;
+    this.ctrl |= 0x0C;
+    return;
+  }
+
+  const carry = this.shift & 1;
+
+  this.shift >>= 1;
+  this.shift |= (val & 1) << 4;
+
+  if (carry) {
+    const reg = (addr >> 13) & 3;
+    const data = this.shift & 0x1F;
+
+    this.shift = 0x10;
+
+    switch (reg) {
+      case 0:
         this.ctrl = data;
-        const mirrorMode = data & 3;
-        if (mirrorMode === 0) this.cart.mirror = 'single0';
-        else if (mirrorMode === 1) this.cart.mirror = 'single1';
-        else if (mirrorMode === 2) this.cart.mirror = 'vertical';
+
+        const mirror = data & 3;
+        if (mirror === 0) this.cart.mirror = 'single0';
+        else if (mirror === 1) this.cart.mirror = 'single1';
+        else if (mirror === 2) this.cart.mirror = 'vertical';
         else this.cart.mirror = 'horizontal';
-        
-        // Also update PPU's cached mirror value if PPU is connected
-        if (this.ppu) {
-          this.ppu.mirror = this.cart.mirror;
-        }
-      }
-      else if (reg === 1) {
-        // CHR bank 0
+
+        if (this.ppu) this.ppu.mirror = this.cart.mirror;
+        break;
+
+      case 1:
         this.chrBank0 = data;
-      }
-      else if (reg === 2) {
-        // CHR bank 1
+        break;
+
+      case 2:
         this.chrBank1 = data;
-      }
-      else if (reg === 3) {
-        // PRG bank
+        break;
+
+      case 3:
         this.prgBank = data & 0x0F;
-      }
+        break;
     }
   }
+}
   
   prgRead(addr) {
     // PRG RAM at $6000-$7FFF
