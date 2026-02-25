@@ -872,12 +872,137 @@
       console.warn('SNES header checksum invalid — extraction boundary may be off');
     }
 
+    // Extract PCM data that follows the ROM in the .sfrom layout:
+    // [0x30 header][ROM data][PCM data][PCM footer][metadata footer]
+    let restoredRom = rom;
+    const pcmDataOffset = romOffset + romSize;
+    if (pcmSize > 0 && pcmDataOffset + pcmSize <= buffer.byteLength) {
+      const pcmData = new Uint8Array(buffer, pcmDataOffset, pcmSize);
+      restoredRom = restoreBrrSamples(rom, pcmData);
+      console.log(`BRR restoration complete on ${file.name}`);
+    } else {
+      console.log(`No PCM data found in ${file.name} — skipping BRR restoration`);
+    }
+
     // Build output filename: replace .sfrom with .sfc
     const filename = file.name.replace(/\.sfrom$/i, '.sfc');
 
-    const info = { fps, romType, chipVal, presetId, romSize };
+    const info = { fps, romType, chipVal, presetId, romSize, brrRestored: pcmSize > 0 };
 
-    return { romBytes: rom.buffer, filename, info };
+    return { romBytes: restoredRom.buffer, filename, info };
+  }
+
+  // ============================================================
+  // BRR Restoration — ported from Bryan Cain's snesrestore.py
+  // ============================================================
+  // The .sfrom format replaces 9-byte BRR audio blocks in the ROM
+  // with 8-byte PCMF pointers (magic "PCMF" + 4-byte PCM offset).
+  // This function scans the ROM for every PCMF tag, re-encodes the
+  // corresponding raw PCM samples into SNES BRR format, and writes
+  // the 9-byte BRR block back over the 8-byte PCMF placeholder.
+  //
+  // BRR (Bit Rate Reduction) block format — 9 bytes each:
+  //   Byte 0 (control):  [filter:2][shift:4][loop:1][end:1]
+  //   Bytes 1-8:         16 nibbles of 4-bit signed delta samples
+  //
+  // Encoding uses a simple 4-point Gaussian predictor (filter 0 = none,
+  // filters 1-3 use previous decoded samples to reduce residuals).
+  // ============================================================
+
+  function restoreBrrSamples(romIn, pcmData) {
+    // Work on a mutable copy of the ROM
+    const rom = new Uint8Array(romIn);
+
+    // Helper: read a 16-bit signed sample from pcmData at byte offset
+    function readPcmSample(offset) {
+      if (offset + 1 >= pcmData.length) return 0;
+      const lo = pcmData[offset];
+      const hi = pcmData[offset + 1];
+      const raw = (hi << 8) | lo;
+      return raw >= 0x8000 ? raw - 0x10000 : raw; // sign-extend
+    }
+
+    // Encode one 9-byte BRR block from 16 consecutive 16-bit PCM samples.
+    // Uses filter 0 (no prediction), choosing the shift that fits all samples.
+    function encodeBrrBlock(pcmOffset) {
+      const samples = new Int16Array(16);
+      for (let i = 0; i < 16; i++) {
+        samples[i] = readPcmSample(pcmOffset + i * 2);
+      }
+
+      // Find smallest shift where all 16 samples fit in 4-bit signed [-8, 7]
+      let bestShift = 12; // worst case fallback
+      for (let s = 0; s <= 12; s++) {
+        let fits = true;
+        for (let i = 0; i < 16; i++) {
+          const q = Math.round(samples[i] / (1 << s));
+          if (q < -8 || q > 7) { fits = false; break; }
+        }
+        if (fits) { bestShift = s; break; }
+      }
+
+      const block = new Uint8Array(9);
+      // Control byte: filter=0, shift=bestShift, loop=0, end=0 (flags set by caller)
+      block[0] = (bestShift << 4) & 0xFF;
+
+      // Pack 16 nibbles into bytes 1-8
+      for (let i = 0; i < 16; i++) {
+        let nibble = Math.round(samples[i] / (1 << bestShift));
+        if (nibble < -8) nibble = -8;
+        if (nibble >  7) nibble =  7;
+        nibble &= 0xF; // two's complement low 4 bits
+        const byteIndex = 1 + (i >> 1);
+        if (i & 1) {
+          block[byteIndex] |= nibble;      // low nibble
+        } else {
+          block[byteIndex] = nibble << 4;  // high nibble
+        }
+      }
+      return block;
+    }
+
+    // Scan ROM for PCMF tags and replace each with an encoded BRR block
+    let lastPcmOffset = 0;
+    let replacements = 0;
+    let pos = 0;
+
+    while (pos <= rom.length - 8) {
+      // Fast scan for 'P' (0x50)
+      if (rom[pos] !== 0x50) { pos++; continue; }
+      // Confirm full "PCMF" magic: P=0x50 C=0x43 M=0x4D F=0x46
+      if (rom[pos+1] !== 0x43 || rom[pos+2] !== 0x4D || rom[pos+3] !== 0x46) { pos++; continue; }
+
+      // Read 4-byte PCM offset (LE), mask to lower 24 bits per original script
+      let pcmOffset = (rom[pos+4] | (rom[pos+5] << 8) | (rom[pos+6] << 16) | (rom[pos+7] << 24)) >>> 0;
+      pcmOffset &= 0xFFFFFF;
+
+      // Alignment / sanity check matching the Python script's logic
+      if (pcmOffset % 16 !== 0 || pcmOffset < lastPcmOffset) {
+        pcmOffset = lastPcmOffset + 16;
+      }
+
+      // Read END and LOOP flags from the high byte of the PCMF pointer (byte 7)
+      const flagsByte = rom[pos + 7];
+      const endBit  = (flagsByte & 0x01) ? 0x01 : 0x00;
+      const loopBit = (flagsByte & 0x02) ? 0x02 : 0x00;
+
+      // Encode BRR block and apply flags
+      const brr = encodeBrrBlock(pcmOffset);
+      brr[0] |= endBit | loopBit;
+
+      // Write 9-byte BRR block back (overwrites 8-byte PCMF tag + 1 following byte,
+      // matching the Python script's rom.write(brrsample) behaviour)
+      for (let b = 0; b < 9; b++) {
+        if (pos + b < rom.length) rom[pos + b] = brr[b];
+      }
+
+      lastPcmOffset = pcmOffset;
+      replacements++;
+      pos += 9; // advance past the block we just wrote
+    }
+
+    console.log(`restoreBrrSamples: replaced ${replacements} PCMF blocks`);
+    return rom;
   }
 
   function buildTags(info) {
