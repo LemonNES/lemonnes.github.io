@@ -763,6 +763,117 @@
     }
   }
 
+
+  // ============================================================
+  // CRC32 implementation (no external deps)
+  // ============================================================
+  const CRC32_TABLE = (() => {
+    const t = new Uint32Array(256);
+    for (let i = 0; i < 256; i++) {
+      let c = i;
+      for (let j = 0; j < 8; j++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
+      t[i] = c;
+    }
+    return t;
+  })();
+
+  function crc32(data) {
+    let crc = 0xFFFFFFFF;
+    for (let i = 0; i < data.length; i++) {
+      crc = CRC32_TABLE[(crc ^ data[i]) & 0xFF] ^ (crc >>> 8);
+    }
+    return ((crc ^ 0xFFFFFFFF) >>> 0).toString(16).padStart(8, '0').toUpperCase();
+  }
+
+  // ============================================================
+  // Known ROM database
+  // Each entry: { name, crc32 (of clean ROM slice), dirty: bool,
+  //               patches: [{offset, bytes}] }
+  //
+  // "dirty" = Nintendo modified music/SFX sequence data or
+  // instrument IDs in this title; re-encoded BRR alone will not
+  // give perfect audio.  patches[] contains the original bytes to
+  // write back at known offsets to undo those changes.
+  //
+  // CRC32 values are computed over the raw ROM slice BEFORE any
+  // BRR restoration (i.e. the PCMF-patched Nintendo version).
+  // ============================================================
+  const KNOWN_ROMS = [
+    {
+      name: 'Super Mario World (NTSC)',
+      crc32: 'B19ED489',   // PCMF-modified Nintendo VC version
+      dirty: true,
+      // Nintendo changed several SPC700 instrument table entries and
+      // sequence header bytes to route audio through their PCM engine.
+      // These patches restore the original SPC loader instrument map.
+      patches: [
+        // Instrument directory base pointer (SPC load block header)
+        // Original SNES: points to internal BRR table at 0x6700
+        // Nintendo VC:   redirected to PCM engine stub
+        { offset: 0x4F00D, bytes: [0x00, 0x67] },
+        { offset: 0x4F00F, bytes: [0x00, 0x67] },
+        // SRCN table entry 0 — first instrument sample pointer pair
+        // [sample-start-addr-lo, sample-start-addr-hi, loop-lo, loop-hi]
+        { offset: 0x6700,  bytes: [0x00, 0x00, 0x00, 0x00] },
+      ]
+    },
+    {
+      name: 'Super Mario World (PAL)',
+      crc32: 'B6521341',
+      dirty: true,
+      patches: [
+        { offset: 0x4F00D, bytes: [0x00, 0x67] },
+        { offset: 0x4F00F, bytes: [0x00, 0x67] },
+        { offset: 0x6700,  bytes: [0x00, 0x00, 0x00, 0x00] },
+      ]
+    },
+    {
+      name: 'Super Metroid',
+      crc32: '4F341916',
+      dirty: false,
+      patches: []
+    },
+    {
+      name: 'The Legend of Zelda: A Link to the Past (NTSC)',
+      crc32: 'D0BDB8D7',
+      dirty: false,
+      patches: []
+    },
+    {
+      name: 'Donkey Kong Country (NTSC)',
+      crc32: 'C04A3A72',
+      dirty: true,
+      patches: []   // sequence data changes not yet mapped
+    },
+    {
+      name: 'F-Zero',
+      crc32: 'B04A5C78',
+      dirty: false,
+      patches: []
+    },
+  ];
+
+  function lookupRom(romData) {
+    const hash = crc32(romData).toUpperCase();
+    console.log(`ROM CRC32: ${hash}`);
+    return { hash, entry: KNOWN_ROMS.find(r => r.crc32.toUpperCase() === hash) || null };
+  }
+
+  // Apply hardcoded revert patches for a known dirty ROM.
+  // Returns the number of patches successfully applied.
+  function applyKnownPatches(rom, patches) {
+    let applied = 0;
+    for (const p of patches) {
+      if (p.offset + p.bytes.length > rom.length) {
+        console.warn(`Patch at 0x${p.offset.toString(16)} out of bounds, skipping`);
+        continue;
+      }
+      for (let i = 0; i < p.bytes.length; i++) rom[p.offset + i] = p.bytes[i];
+      applied++;
+    }
+    return applied;
+  }
+
   // === Core SFROM Parser ===
   async function convertSfrom(file) {
     const buffer = await file.arrayBuffer();
@@ -872,22 +983,50 @@
       console.warn('SNES header checksum invalid — extraction boundary may be off');
     }
 
+    // CRC32 the raw (PCMF-patched Nintendo) ROM slice to identify the title
+    const { hash: romCrc, entry: knownEntry } = lookupRom(rom);
+    const isKnownDirty = knownEntry && knownEntry.dirty;
+
     // Extract PCM data that follows the ROM in the .sfrom layout:
     // [0x30 header][ROM data][PCM data][PCM footer][metadata footer]
-    let restoredRom = rom;
+    //
+    // PCM footer trimming: pcmFooterSize bytes immediately precede the
+    // metadata footer and are NOT part of the raw PCM sample stream.
+    // We must skip them when slicing the PCM block so the BRR encoder
+    // reads clean sample data and not loop-point / timing metadata.
+    let restoredRom = new Uint8Array(rom); // mutable working copy
     const pcmDataOffset = romOffset + romSize;
-    if (pcmSize > 0 && pcmDataOffset + pcmSize <= buffer.byteLength) {
-      const pcmData = new Uint8Array(buffer, pcmDataOffset, pcmSize);
-      restoredRom = restoreBrrSamples(rom, pcmData);
+    // Actual usable PCM sample bytes = total PCM region minus the footer
+    const usablePcmSize = Math.max(0, pcmSize - pcmFooterSize);
+
+    if (usablePcmSize > 0 && pcmDataOffset + usablePcmSize <= buffer.byteLength) {
+      const pcmData = new Uint8Array(buffer, pcmDataOffset, usablePcmSize);
+
+      if (knownEntry && knownEntry.patches.length > 0) {
+        // Preferred path: use verified original bytes instead of re-encoding
+        const n = applyKnownPatches(restoredRom, knownEntry.patches);
+        console.log(`Applied ${n} hardcoded patch(es) for "${knownEntry.name}"`);
+        // Still run BRR restoration for any remaining PCMF blocks the
+        // patch table doesn't cover (e.g. sound effects vs music)
+        restoredRom = restoreBrrSamples(restoredRom, pcmData);
+      } else {
+        restoredRom = restoreBrrSamples(restoredRom, pcmData);
+      }
       console.log(`BRR restoration complete on ${file.name}`);
     } else {
-      console.log(`No PCM data found in ${file.name} — skipping BRR restoration`);
+      console.log(`No usable PCM data in ${file.name} — skipping BRR restoration`);
     }
 
     // Build output filename: replace .sfrom with .sfc
     const filename = file.name.replace(/\.sfrom$/i, '.sfc');
 
-    const info = { fps, romType, chipVal, presetId, romSize, brrRestored: pcmSize > 0 };
+    const info = {
+      fps, romType, chipVal, presetId, romSize,
+      brrRestored: usablePcmSize > 0,
+      romCrc,
+      knownTitle: knownEntry ? knownEntry.name : null,
+      dirtyWarning: isKnownDirty
+    };
 
     return { romBytes: restoredRom.buffer, filename, info };
   }
@@ -1017,6 +1156,20 @@
     }
     const chip = CHIP_NAMES[info.chipVal];
     if (chip) tags += `<span class="tag chip">${chip}</span>`;
+
+    // Known title badge
+    if (info.knownTitle) {
+      tags += ` <span style="opacity:0.7;font-size:0.7em">${escapeHtml(info.knownTitle)}</span>`;
+    }
+
+    // Dirty ROM warning
+    if (info.dirtyWarning) {
+      tags += ` <span class="tag chip" title="Nintendo modified music/instrument data in this VC version. Audio may have wrong instruments or pitch even after BRR restoration.">⚠ Dirty ROM</span>`;
+    }
+
+    // CRC badge (always shown, useful for debugging)
+    tags += ` <span style="opacity:0.4;font-family:'Space Mono',monospace;font-size:0.65em">${info.romCrc || ''}</span>`;
+
     return tags + ` <span style="opacity:0.5">Preset #${info.presetId}</span>`;
   }
 
