@@ -801,34 +801,37 @@
     // 0x11: ROM Type (1 byte) 0x14=LoROM 0x15=HiROM
     // 0x12: Enhancement Chip (1 byte)
 
-    let romSize, fps, romType, chipVal, presetId;
+    let romSize, fps, romType, chipVal, presetId, pcmSize = 0, pcmFooterSize = 0;
 
     if (footerOffset + 0x13 <= buffer.byteLength) {
-      fps       = bytes[footerOffset + 0x00];
-      romSize   = view.getUint32(footerOffset + 0x01, true);
-      presetId  = view.getUint16(footerOffset + 0x0D, true);
-      romType   = bytes[footerOffset + 0x11];
-      chipVal   = bytes[footerOffset + 0x12];
+      fps           = bytes[footerOffset + 0x00];
+      romSize       = view.getUint32(footerOffset + 0x01, true);
+      pcmSize       = view.getUint32(footerOffset + 0x05, true);   // FIX: was ignored
+      pcmFooterSize = view.getUint32(footerOffset + 0x09, true);   // FIX: was ignored
+      presetId      = view.getUint16(footerOffset + 0x0D, true);
+      romType       = bytes[footerOffset + 0x11];
+      chipVal       = bytes[footerOffset + 0x12];
     } else {
-      // Fallback: infer ROM size from file size - header - footer size estimate
-      romSize = buffer.byteLength - romOffset - 0x23;
-      fps = 0x3C;
-      romType = 0x14;
-      chipVal = 0x00;
-      presetId = 0;
+      fps = 0x3C; romType = 0x14; chipVal = 0x00; presetId = 0;
     }
 
-    // Clamp rom size to what's available
-    const maxRomSize = buffer.byteLength - romOffset;
-    if (romSize <= 0 || romSize > maxRomSize) {
-      // Use available data minus reasonable footer
-      romSize = maxRomSize;
-      // Try to align to nearest SNES power-of-two ROM size
-      const snesRomSizes = [0x80000, 0x100000, 0x200000, 0x400000, 0x600000];
+    // FIX: sfrom layout after romOffset = [ROM][PCM data][PCM footer][metadata footer]
+    // Use pcmSize + pcmFooterSize to compute the true upper boundary of ROM data.
+    // Previously, the clamp used the full file size and could bleed PCM bytes into the
+    // ROM slice, corrupting audio sample tables and causing incorrect playback.
+    const safeMax = footerOffset - pcmSize - pcmFooterSize - romOffset;
+
+    const snesRomSizes = [0x80000, 0x100000, 0x200000, 0x300000, 0x400000, 0x600000];
+    if (romSize <= 0 || romSize > safeMax) {
+      // Footer romSize missing or bogus — snap to largest standard size within safe boundary
+      romSize = 0;
       for (const sz of snesRomSizes) {
-        if (maxRomSize >= sz) romSize = sz;
+        if (safeMax >= sz) romSize = sz;
       }
+      if (!romSize) romSize = Math.max(0, safeMax);
     }
+
+    if (romSize <= 0) throw new Error('Could not determine a valid ROM size');
 
     // Extract ROM bytes
     const romBytes = buffer.slice(romOffset, romOffset + romSize);
