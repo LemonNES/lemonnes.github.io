@@ -1062,48 +1062,125 @@
     }
 
     // Encode one 9-byte BRR block from 16 consecutive 16-bit PCM samples.
-    // Uses filter 0 (no prediction), choosing the shift that fits all samples.
-    function encodeBrrBlock(pcmOffset) {
-      const samples = new Int16Array(16);
+    //
+    // All four SNES BRR prediction filters are tried for every block.
+    // The filter+shift combination with the lowest RMS residual error is
+    // chosen, which matches how professional SNES encoders (snesbrr, BRRtools)
+    // work and avoids the pitch drift caused by always using filter 0.
+    //
+    // Filter prediction formulas (p1 = previous decoded sample,
+    //                              p2 = sample before that):
+    //   Filter 0:  pred = 0
+    //   Filter 1:  pred = p1 * 0.9375                    (15/16)
+    //   Filter 2:  pred = p1 * 1.90625 - p2 * 0.9375    (61/32 - 15/16)
+    //   Filter 3:  pred = p1 * 1.796875 - p2 * 0.8125   (115/64 - 13/16)
+    //
+    // prev1, prev2 are the last two decoded samples from the *previous* block,
+    // maintained across calls by the caller via the state object.
+    function encodeBrrBlock(pcmOffset, state) {
+      // Read 16 raw PCM samples for this block
+      const target = new Int32Array(16);
       for (let i = 0; i < 16; i++) {
-        samples[i] = readPcmSample(pcmOffset + i * 2);
+        target[i] = readPcmSample(pcmOffset + i * 2);
       }
 
-      // Find smallest shift where all 16 samples fit in 4-bit signed [-8, 7]
-      let bestShift = 12; // worst case fallback
-      for (let s = 0; s <= 12; s++) {
-        let fits = true;
-        for (let i = 0; i < 16; i++) {
-          const q = Math.round(samples[i] / (1 << s));
-          if (q < -8 || q > 7) { fits = false; break; }
+      let bestBlock = null;
+      let bestError = Infinity;
+
+      // Try each of the 4 filters
+      for (let filter = 0; filter < 4; filter++) {
+        // Try each valid shift value (1-12; 0 and 13-15 are special/unused)
+        for (let shift = 0; shift <= 12; shift++) {
+          const block = new Uint8Array(9);
+          block[0] = ((shift & 0xF) << 4) | ((filter & 0x3) << 2); // flags set by caller
+
+          let p1 = state.prev1;
+          let p2 = state.prev2;
+          let totalError = 0;
+          let valid = true;
+
+          const decoded = new Int32Array(16); // track decoded values for p1/p2 update
+
+          for (let i = 0; i < 16; i++) {
+            // Compute prediction
+            let pred;
+            switch (filter) {
+              case 0: pred = 0; break;
+              case 1: pred = p1 + ((-p1) >> 4); break;                          // p1 * 15/16
+              case 2: pred = (p1 * 2) + ((-p1 * 3) >> 5) - p2 + (p2 >> 4); break; // p1*61/32 - p2*15/16
+              case 3: pred = (p1 * 2) + ((-p1 * 13) >> 6) - p2 + ((p2 * 3) >> 4); break; // p1*115/64 - p2*13/16
+            }
+
+            // Residual to encode
+            const residual = target[i] - pred;
+
+            // Quantise residual to 4-bit signed at this shift
+            let q;
+            if (shift === 0) {
+              q = 0; // shift 0 always produces silence — only useful for silent blocks
+            } else {
+              q = Math.round(residual / (1 << shift));
+            }
+
+            if (q < -8) q = -8;
+            if (q >  7) q =  7;
+
+            // Decode back to track actual p1/p2 for subsequent predictions
+            const reconstructed = (q << shift);
+            let d = pred + reconstructed;
+            // Clamp to 16-bit signed (SNES hardware behaviour)
+            d = Math.max(-32768, Math.min(32767, d));
+            // Apply SNES sign extension quirk: shift-out high bits
+            d = (d << 16) >> 16;
+            decoded[i] = d;
+
+            // Accumulate squared error
+            const err = target[i] - d;
+            totalError += err * err;
+
+            // Pack nibble into block bytes 1-8
+            const nibble = q & 0xF;
+            const byteIndex = 1 + (i >> 1);
+            if (i & 1) {
+              block[byteIndex] |= nibble;
+            } else {
+              block[byteIndex] = nibble << 4;
+            }
+
+            p2 = p1;
+            p1 = d;
+          }
+
+          if (totalError < bestError) {
+            bestError = totalError;
+            bestBlock = block;
+            // Store the final p1/p2 that result from decoding this block
+            bestBlock._p1 = p1;
+            bestBlock._p2 = p2;
+          }
         }
-        if (fits) { bestShift = s; break; }
       }
 
-      const block = new Uint8Array(9);
-      // Control byte: filter=0, shift=bestShift, loop=0, end=0 (flags set by caller)
-      block[0] = (bestShift << 4) & 0xFF;
+      // Advance the shared decoder state with the winners p1/p2
+      state.prev1 = bestBlock._p1;
+      state.prev2 = bestBlock._p2;
 
-      // Pack 16 nibbles into bytes 1-8
-      for (let i = 0; i < 16; i++) {
-        let nibble = Math.round(samples[i] / (1 << bestShift));
-        if (nibble < -8) nibble = -8;
-        if (nibble >  7) nibble =  7;
-        nibble &= 0xF; // two's complement low 4 bits
-        const byteIndex = 1 + (i >> 1);
-        if (i & 1) {
-          block[byteIndex] |= nibble;      // low nibble
-        } else {
-          block[byteIndex] = nibble << 4;  // high nibble
-        }
-      }
-      return block;
+      return bestBlock;
     }
 
-    // Scan ROM for PCMF tags and replace each with an encoded BRR block
+    // Scan ROM for PCMF tags and replace each with an encoded BRR block.
+    //
+    // Decoder state (prev1, prev2) is reset to zero at the start of each
+    // new sample (identified by a break in the sequential PCM offset stream
+    // or by an END block flag), matching SNES hardware which resets the BRR
+    // decoder state when it loads a new sample from the directory.
     let lastPcmOffset = 0;
     let replacements = 0;
     let pos = 0;
+
+    // Shared decoder state passed into encodeBrrBlock so it can track p1/p2
+    // across consecutive blocks belonging to the same sample.
+    let decoderState = { prev1: 0, prev2: 0 };
 
     while (pos <= rom.length - 8) {
       // Fast scan for 'P' (0x50)
@@ -1120,14 +1197,25 @@
         pcmOffset = lastPcmOffset + 16;
       }
 
+      // Reset decoder state at the start of each new sample.
+      // A new sample starts when the PCM offset rewinds to 0 or jumps
+      // backwards, which happens when the scan moves to a new instrument.
+      if (pcmOffset === 0 || pcmOffset < lastPcmOffset) {
+        decoderState = { prev1: 0, prev2: 0 };
+      }
+
       // Read END and LOOP flags from the high byte of the PCMF pointer (byte 7)
       const flagsByte = rom[pos + 7];
       const endBit  = (flagsByte & 0x01) ? 0x01 : 0x00;
       const loopBit = (flagsByte & 0x02) ? 0x02 : 0x00;
 
-      // Encode BRR block and apply flags
-      const brr = encodeBrrBlock(pcmOffset);
+      // Encode BRR block using full 4-filter best-fit selection.
+      // encodeBrrBlock updates decoderState.prev1/prev2 in place.
+      const brr = encodeBrrBlock(pcmOffset, decoderState);
       brr[0] |= endBit | loopBit;
+
+      // Reset state after END block — next block starts a new sample
+      if (endBit) decoderState = { prev1: 0, prev2: 0 };
 
       // Write 9-byte BRR block back (overwrites 8-byte PCMF tag + 1 following byte,
       // matching the Python script's rom.write(brrsample) behaviour)
