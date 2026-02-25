@@ -528,6 +528,41 @@
     color: var(--pixel);
   }
 
+  /* Diagnostic log panel */
+  .diag-toggle {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-family: 'Space Mono', monospace;
+    font-size: 0.65rem;
+    padding: 3px 8px;
+    border-radius: 5px;
+    cursor: pointer;
+    margin-top: 6px;
+    transition: all 0.2s;
+  }
+  .diag-toggle:hover { border-color: var(--accent2); color: var(--accent2); }
+
+  .diag-panel {
+    display: none;
+    margin-top: 8px;
+    background: #0d0d14;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-family: 'Space Mono', monospace;
+    font-size: 0.68rem;
+    line-height: 1.7;
+    color: var(--muted);
+    max-height: 200px;
+    overflow-y: auto;
+  }
+  .diag-panel.open { display: block; }
+  .diag-panel .d-ok   { color: #86efac; }
+  .diag-panel .d-warn { color: var(--warn); }
+  .diag-panel .d-err  { color: var(--error); }
+  .diag-panel .d-info { color: var(--pixel); }
+
   /* spinner */
   @keyframes spin {
     to { transform: rotate(360deg); }
@@ -725,7 +760,7 @@
           entry.result
         );
       } catch (err) {
-        setItemState(entry, 'error', '❌', `Error: ${err.message}`);
+        setItemState(entry, 'error', '❌', `Error: ${err.message}`, null, [{ level: 'err', msg: err.message }]);
       }
     }
 
@@ -744,15 +779,16 @@
     });
   });
 
-  function setItemState(entry, state, icon, metaHtml, result = null) {
+  function setItemState(entry, state, icon, metaHtml, result = null, diagOverride = null) {
     const el = entry.element;
     el.className = `file-item ${state}`;
     el.querySelector('.file-status-icon').textContent = icon;
     el.querySelector('.file-meta').innerHTML = metaHtml;
 
-    // Add or remove download button
-    const existing = el.querySelector('.download-btn');
-    if (existing) existing.remove();
+    // Remove old controls
+    el.querySelectorAll('.download-btn, .diag-toggle, .diag-panel').forEach(n => n.remove());
+
+    const diagEntries = diagOverride || (result && result.info && result.info.diag) || [];
 
     if (result) {
       const btn = document.createElement('button');
@@ -760,6 +796,28 @@
       btn.innerHTML = '⬇ .sfc';
       btn.addEventListener('click', () => triggerDownload(result.romBytes, result.filename));
       el.appendChild(btn);
+    }
+
+    if (diagEntries.length > 0) {
+      const toggle = document.createElement('button');
+      toggle.className = 'diag-toggle';
+      toggle.textContent = '▸ diagnostics';
+
+      const panel = document.createElement('div');
+      panel.className = 'diag-panel';
+      panel.innerHTML = diagEntries.map(d =>
+        `<div class="d-${d.level}">${escapeHtml(d.msg)}</div>`
+      ).join('');
+
+      toggle.addEventListener('click', () => {
+        panel.classList.toggle('open');
+        toggle.textContent = panel.classList.contains('open') ? '▾ diagnostics' : '▸ diagnostics';
+      });
+
+      // Append to file-info div, not the outer item
+      const fileInfo = el.querySelector('.file-info');
+      fileInfo.appendChild(toggle);
+      fileInfo.appendChild(panel);
     }
   }
 
@@ -880,6 +938,13 @@
     const bytes = new Uint8Array(buffer);
     const view = new DataView(buffer);
 
+    // Diagnostics log — every notable event is pushed here so it can be
+    // displayed in-page without needing browser dev tools.
+    const diag = [];
+    function dlog(msg)  { console.log(msg);  diag.push({ level: 'info', msg: String(msg) }); }
+    function dwarn(msg) { console.warn(msg); diag.push({ level: 'warn', msg: String(msg) }); }
+    function derr(msg)  { console.error(msg);diag.push({ level: 'err',  msg: String(msg) }); }
+
     // Validate magic / structure
     // SNES Mini sfrom: first 4 bytes = 0x00 0x00 0x01 0x00 (little endian 0x00010000... actually 0x00000100)
     const magic = view.getUint32(0x00, true);
@@ -896,6 +961,8 @@
     const romOffset = view.getUint32(0x08, true); // Usually 0x30
     const footerOffset = view.getUint32(0x14, true);
 
+    dlog(`romOffset=0x${romOffset.toString(16)}  footerOffset=0x${footerOffset.toString(16)}  fileSize=${buffer.byteLength}`);
+
     if (romOffset > buffer.byteLength) {
       throw new Error('Invalid ROM offset in header');
     }
@@ -907,7 +974,7 @@
 
     // Fix: Warn on file size mismatch (Fix #7)
     if (fileSize !== buffer.byteLength) {
-      console.warn('sfrom header file size mismatch:', fileSize, 'vs', buffer.byteLength);
+      dwarn(`File size mismatch: header says ${fileSize}, actual ${buffer.byteLength}`);
     }
 
     // Footer starts at footerOffset
@@ -932,8 +999,10 @@
       presetId      = view.getUint16(footerOffset + 0x0D, true);
       romType       = bytes[footerOffset + 0x11];
       chipVal       = bytes[footerOffset + 0x12];
+      dlog(`Footer: romSize=${romSize}  pcmSize=${pcmSize}  pcmFooterSize=${pcmFooterSize}  romType=0x${romType.toString(16)}  fps=0x${fps.toString(16)}`);
     } else {
       fps = 0x3C; romType = 0x14; chipVal = 0x00; presetId = 0;
+      dwarn('Footer too small — using defaults');
     }
 
     // sfrom layout after romOffset = [ROM][PCM data][PCM footer][metadata footer]
@@ -993,8 +1062,9 @@
       detectedRomType = romType;
     }
 
+    dlog(`Header scores — LoROM:${scoreLoROM} HiROM:${scoreHiROM} → using ${detectedRomType === 0x15 ? 'HiROM' : 'LoROM'} (headerBase=0x${headerBase.toString(16)})`);
     if (detectedRomType !== romType) {
-      console.warn(`ROM type mismatch: footer says 0x${romType.toString(16)}, internal header says 0x${detectedRomType.toString(16)} — using internal`);
+      dwarn(`ROM type mismatch: footer=0x${romType.toString(16)}, internal=0x${detectedRomType.toString(16)} — using internal`);
       romType = detectedRomType;
     }
 
@@ -1006,7 +1076,7 @@
       if (sizeExponent >= 8 && sizeExponent <= 16) { // sanity: 256 KB – 64 MB
         const internalRomSize = Math.pow(2, sizeExponent) * 1024;
         if (romSize > internalRomSize) {
-          console.log(`Trimming ${romSize - internalRomSize} bytes (footer=${romSize}, internal=${internalRomSize})`);
+          dlog(`Trimming ${romSize - internalRomSize} bytes (footer=${romSize}, internal=${internalRomSize})`);
           romSize = internalRomSize;
         }
       }
@@ -1020,13 +1090,17 @@
     }
     const checksum   = (rom[headerBase + 0x1E] | (rom[headerBase + 0x1F] << 8));
     const complement = (rom[headerBase + 0x1C] | (rom[headerBase + 0x1D] << 8));
-    if (((checksum + complement) & 0xFFFF) !== 0xFFFF) {
-      console.warn('SNES header checksum mismatch after extraction');
+    const checksumOk = ((checksum ^ complement) & 0xFFFF) === 0xFFFF;
+    dlog(`Checksum: 0x${checksum.toString(16).padStart(4,'0')} complement: 0x${complement.toString(16).padStart(4,'0')} → ${checksumOk ? '✓ OK' : '✗ MISMATCH'}`);
+    if (!checksumOk) {
+      dwarn('SNES header checksum mismatch after extraction');
     }
 
     // CRC32 the raw (PCMF-patched Nintendo) ROM slice to identify the title
     const { hash: romCrc, entry: knownEntry } = lookupRom(rom);
     const isKnownDirty = knownEntry && knownEntry.dirty;
+    dlog(`CRC32: ${romCrc} → ${knownEntry ? knownEntry.name : 'unknown title'}`);
+    dlog(`Output size: ${romSize} bytes (${(romSize/1024).toFixed(1)} KB)`);
 
     // Extract PCM data that follows the ROM in the .sfrom layout:
     // [0x30 header][ROM data][PCM data][PCM footer][metadata footer]
@@ -1046,16 +1120,16 @@
       if (knownEntry && knownEntry.patches.length > 0) {
         // Preferred path: use verified original bytes instead of re-encoding
         const n = applyKnownPatches(restoredRom, knownEntry.patches);
-        console.log(`Applied ${n} hardcoded patch(es) for "${knownEntry.name}"`);
+        dlog(`Applied ${n} hardcoded patch(es) for "${knownEntry.name}"`);
         // Still run BRR restoration for any remaining PCMF blocks the
         // patch table doesn't cover (e.g. sound effects vs music)
         restoredRom = restoreBrrSamples(restoredRom, pcmData);
       } else {
         restoredRom = restoreBrrSamples(restoredRom, pcmData);
       }
-      console.log(`BRR restoration complete on ${file.name}`);
+      dlog(`BRR restoration: ${usablePcmSize > 0 ? 'complete' : 'skipped (no PCM data)'}`);
     } else {
-      console.log(`No usable PCM data in ${file.name} — skipping BRR restoration`);
+      dlog('No usable PCM data — skipping BRR restoration');
     }
 
     // Build output filename: replace .sfrom with .sfc
@@ -1066,7 +1140,8 @@
       brrRestored: usablePcmSize > 0,
       romCrc,
       knownTitle: knownEntry ? knownEntry.name : null,
-      dirtyWarning: isKnownDirty
+      dirtyWarning: isKnownDirty,
+      diag
     };
 
     return { romBytes: restoredRom.buffer, filename, info };
