@@ -837,12 +837,32 @@
     if (romSize > safeMax) throw new Error('Footer ROM size exceeds safe boundary');
     if (romOffset + romSize > buffer.byteLength) throw new Error('ROM slice exceeds file bounds');
 
+    // Determine SNES internal header base early so we can cross-reference the size
+    const headerBase = (romType === 0x15 || romType === 0x35) ? 0xFFC0 : 0x7FC0;
+
+    // Cross-reference footer size against the internal SNES header's own size byte.
+    // Byte at headerBase + 0x17 (i.e. 0x7FD7 for LoROM, 0xFFD7 for HiROM) holds the
+    // ROM size exponent n, where actual size = 2^n * 1024 bytes.
+    // If the footer says more bytes than the internal header claims, trim the excess —
+    // those extra bytes are padding / metadata and will confuse emulator memory mirroring.
+    if (headerBase + 0x18 <= romOffset + romSize) {
+      const tempRom = new Uint8Array(buffer, romOffset, romSize);
+      const localBase = headerBase; // relative to start of ROM slice
+      if (localBase + 0x18 <= tempRom.length) {
+        const sizeExponent = tempRom[localBase + 0x17];
+        if (sizeExponent >= 8 && sizeExponent <= 16) { // sanity: 256 KB – 64 MB
+          const internalRomSize = Math.pow(2, sizeExponent) * 1024;
+          if (romSize > internalRomSize) {
+            console.log(`Trimming ${romSize - internalRomSize} bytes of junk from footer (footer=${romSize}, internal=${internalRomSize})`);
+            romSize = internalRomSize;
+          }
+        }
+      }
+    }
+
     // Extract ROM bytes
     const romBytes = buffer.slice(romOffset, romOffset + romSize);
     const rom = new Uint8Array(romBytes);
-
-    // Fix #5: validate extracted ROM contains a plausible SNES internal header
-    const headerBase = (romType === 0x15 || romType === 0x35) ? 0xFFC0 : 0x7FC0;
     if (headerBase + 0x20 >= rom.length) {
       throw new Error('Extracted ROM too small to contain SNES header');
     }
