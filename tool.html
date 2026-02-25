@@ -835,13 +835,35 @@
 
     // Extract ROM bytes
     const romBytes = buffer.slice(romOffset, romOffset + romSize);
+    const rom = new Uint8Array(romBytes);
+
+    // FIX: High-pitched audio correction.
+    // The SNES Mini patches the ROM speed byte in the SNES internal header to FastROM
+    // (0x30/0x31) regardless of the original value. Emulators that honour this byte
+    // run the SPC700 audio driver loop faster than intended, producing audio that
+    // sounds too high-pitched / fast.
+    //
+    // SNES internal header speed byte location:
+    //   LoROM (romType 0x14): 0x7FD5
+    //   HiROM (romType 0x15): 0xFFD5
+    //
+    // Bit 4 is the speed flag: 0 = SlowROM (2.68 MHz), 1 = FastROM (3.58 MHz).
+    // Nintendo forces FastROM. LoROM games are almost always SlowROM (0x20),
+    // so we strip the fast bit back off for LoROM titles.
+    const speedByteOffset = (romType === 0x15) ? 0xFFD5 : 0x7FD5;
+    if (speedByteOffset < rom.length) {
+      const spd = rom[speedByteOffset];
+      if (romType !== 0x15 && (spd & 0x10)) {
+        rom[speedByteOffset] = spd & ~0x10; // restore SlowROM
+      }
+    }
 
     // Build output filename: replace .sfrom with .sfc
     const filename = file.name.replace(/\.sfrom$/i, '.sfc');
 
     const info = { fps, romType, chipVal, presetId, romSize };
 
-    return { romBytes, filename, info };
+    return { romBytes: rom.buffer, filename, info };
   }
 
   function buildTags(info) {
