@@ -1,0 +1,898 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SFROM → SFC Converter</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --surface: #12121a;
+    --surface2: #1a1a26;
+    --border: #2a2a3e;
+    --accent: #7c3aed;
+    --accent2: #a855f7;
+    --glow: rgba(124, 58, 237, 0.3);
+    --text: #e2e2f0;
+    --muted: #6b6b8a;
+    --success: #22c55e;
+    --error: #ef4444;
+    --warn: #f59e0b;
+    --pixel: #c4b5fd;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Syne', sans-serif;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 40px 20px 80px;
+    overflow-x: hidden;
+  }
+
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 60% 40% at 20% 10%, rgba(124,58,237,0.12) 0%, transparent 60%),
+      radial-gradient(ellipse 50% 50% at 80% 80%, rgba(168,85,247,0.08) 0%, transparent 60%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  /* scanlines */
+  body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 3px,
+      rgba(0,0,0,0.08) 3px,
+      rgba(0,0,0,0.08) 4px
+    );
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .container {
+    width: 100%;
+    max-width: 720px;
+    position: relative;
+    z-index: 1;
+  }
+
+  header {
+    text-align: center;
+    margin-bottom: 48px;
+  }
+
+  .logo-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    padding: 6px 14px;
+    border-radius: 100px;
+    font-family: 'Space Mono', monospace;
+    font-size: 11px;
+    color: var(--muted);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    margin-bottom: 20px;
+  }
+
+  .logo-badge .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent2);
+    box-shadow: 0 0 8px var(--accent2);
+    animation: pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+
+  h1 {
+    font-size: clamp(2.2rem, 6vw, 3.5rem);
+    font-weight: 800;
+    letter-spacing: -1px;
+    line-height: 1;
+    margin-bottom: 14px;
+  }
+
+  h1 .from {
+    color: var(--muted);
+  }
+
+  h1 .arrow {
+    color: var(--accent2);
+    display: inline-block;
+    animation: slide 3s ease-in-out infinite;
+  }
+
+  @keyframes slide {
+    0%, 100% { transform: translateX(0); }
+    50% { transform: translateX(6px); }
+  }
+
+  h1 .to {
+    color: var(--text);
+  }
+
+  .subtitle {
+    color: var(--muted);
+    font-size: 0.95rem;
+    font-weight: 400;
+    line-height: 1.6;
+  }
+
+  /* Drop zone */
+  .drop-zone {
+    border: 2px dashed var(--border);
+    border-radius: 16px;
+    background: var(--surface);
+    padding: 56px 32px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.25s ease;
+    position: relative;
+    overflow: hidden;
+    margin-bottom: 24px;
+  }
+
+  .drop-zone::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(ellipse at center, var(--glow) 0%, transparent 70%);
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+
+  .drop-zone:hover, .drop-zone.dragover {
+    border-color: var(--accent);
+    background: var(--surface2);
+  }
+
+  .drop-zone:hover::before, .drop-zone.dragover::before {
+    opacity: 1;
+  }
+
+  .drop-zone.dragover {
+    transform: scale(1.02);
+    box-shadow: 0 0 40px var(--glow), inset 0 0 40px rgba(124,58,237,0.05);
+  }
+
+  .drop-icon {
+    width: 56px;
+    height: 56px;
+    margin: 0 auto 20px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+    transition: all 0.25s;
+  }
+
+  .drop-zone:hover .drop-icon, .drop-zone.dragover .drop-icon {
+    background: var(--accent);
+    border-color: var(--accent);
+    box-shadow: 0 0 20px var(--glow);
+    transform: translateY(-3px);
+  }
+
+  .drop-label {
+    font-size: 1.05rem;
+    font-weight: 700;
+    margin-bottom: 6px;
+    color: var(--text);
+  }
+
+  .drop-hint {
+    font-size: 0.82rem;
+    color: var(--muted);
+    font-family: 'Space Mono', monospace;
+  }
+
+  .drop-hint span {
+    color: var(--pixel);
+  }
+
+  input[type="file"] { display: none; }
+
+  /* File Queue */
+  #file-queue {
+    display: none;
+    margin-bottom: 24px;
+  }
+
+  #file-queue.visible { display: block; }
+
+  .queue-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+  }
+
+  .queue-title {
+    font-size: 0.78rem;
+    font-family: 'Space Mono', monospace;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--muted);
+  }
+
+  .clear-btn {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-family: 'Space Mono', monospace;
+    font-size: 0.7rem;
+    padding: 4px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .clear-btn:hover {
+    border-color: var(--error);
+    color: var(--error);
+  }
+
+  .file-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 320px;
+    overflow-y: auto;
+    padding-right: 4px;
+  }
+
+  .file-list::-webkit-scrollbar { width: 4px; }
+  .file-list::-webkit-scrollbar-track { background: var(--surface); }
+  .file-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+  .file-item {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    transition: border-color 0.2s;
+    animation: slideIn 0.25s ease;
+  }
+
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateY(-8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .file-item.success { border-color: rgba(34,197,94,0.3); }
+  .file-item.error { border-color: rgba(239,68,68,0.3); }
+  .file-item.processing { border-color: rgba(124,58,237,0.4); }
+
+  .file-status-icon {
+    width: 28px;
+    height: 28px;
+    min-width: 28px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    background: var(--surface2);
+  }
+
+  .file-item.success .file-status-icon { background: rgba(34,197,94,0.15); }
+  .file-item.error .file-status-icon { background: rgba(239,68,68,0.15); }
+  .file-item.processing .file-status-icon { background: rgba(124,58,237,0.15); }
+
+  .file-info { flex: 1; min-width: 0; }
+
+  .file-name {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.78rem;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 3px;
+  }
+
+  .file-meta {
+    font-size: 0.72rem;
+    color: var(--muted);
+    font-family: 'Space Mono', monospace;
+  }
+
+  .file-meta .tag {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 4px;
+    margin-right: 6px;
+    font-size: 0.65rem;
+  }
+
+  .tag.lorom { background: rgba(168,85,247,0.2); color: var(--accent2); }
+  .tag.hirom { background: rgba(34,197,94,0.15); color: var(--success); }
+  .tag.fps60 { background: rgba(245,158,11,0.15); color: var(--warn); }
+  .tag.fps50 { background: rgba(96,165,250,0.15); color: #93c5fd; }
+  .tag.chip { background: rgba(239,68,68,0.15); color: #fca5a5; }
+
+  .download-btn {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: 'Space Mono', monospace;
+    font-size: 0.7rem;
+    padding: 6px 12px;
+    border-radius: 7px;
+    cursor: pointer;
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    transition: all 0.2s;
+    white-space: nowrap;
+  }
+
+  .download-btn:hover {
+    background: var(--accent);
+    border-color: var(--accent);
+    box-shadow: 0 0 12px var(--glow);
+  }
+
+  /* Convert button */
+  .convert-btn {
+    width: 100%;
+    padding: 16px;
+    background: var(--accent);
+    border: none;
+    border-radius: 12px;
+    color: white;
+    font-family: 'Syne', sans-serif;
+    font-size: 1rem;
+    font-weight: 700;
+    cursor: pointer;
+    letter-spacing: 0.5px;
+    transition: all 0.25s;
+    position: relative;
+    overflow: hidden;
+    display: none;
+    margin-bottom: 24px;
+  }
+
+  .convert-btn.visible { display: block; }
+
+  .convert-btn::before {
+    content: '';
+    position: absolute;
+    top: 0; left: -100%;
+    width: 100%; height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
+    transition: left 0.5s;
+  }
+
+  .convert-btn:hover::before { left: 100%; }
+  .convert-btn:hover {
+    background: var(--accent2);
+    box-shadow: 0 0 30px var(--glow), 0 4px 20px rgba(0,0,0,0.4);
+    transform: translateY(-1px);
+  }
+
+  .convert-btn:active { transform: translateY(0); }
+
+  .convert-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+  }
+
+  /* Download All */
+  .download-all-btn {
+    width: 100%;
+    padding: 14px;
+    background: transparent;
+    border: 1px solid var(--success);
+    border-radius: 12px;
+    color: var(--success);
+    font-family: 'Syne', sans-serif;
+    font-size: 0.95rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.25s;
+    display: none;
+    margin-bottom: 24px;
+  }
+
+  .download-all-btn.visible { display: block; }
+  .download-all-btn:hover {
+    background: rgba(34,197,94,0.1);
+    box-shadow: 0 0 20px rgba(34,197,94,0.2);
+  }
+
+  /* Info panel */
+  .info-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 24px;
+    margin-bottom: 24px;
+  }
+
+  .info-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+
+  @media (max-width: 480px) {
+    .info-grid { grid-template-columns: 1fr; }
+  }
+
+  .info-item {}
+
+  .info-label {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--muted);
+    margin-bottom: 4px;
+  }
+
+  .info-value {
+    font-size: 0.88rem;
+    color: var(--text);
+    line-height: 1.5;
+  }
+
+  /* How it works */
+  .how-it-works {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 24px;
+  }
+
+  .how-title {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: var(--muted);
+    margin-bottom: 14px;
+  }
+
+  .steps {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .step {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .step-num {
+    min-width: 24px;
+    height: 24px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Space Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--accent2);
+    margin-top: 2px;
+  }
+
+  .step-text {
+    font-size: 0.85rem;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+
+  .step-text strong { color: var(--text); font-weight: 700; }
+
+  code {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.8em;
+    background: var(--surface2);
+    padding: 1px 5px;
+    border-radius: 4px;
+    color: var(--pixel);
+  }
+
+  /* spinner */
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+  .spinner {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 2px solid rgba(255,255,255,0.3);
+    border-top-color: white;
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+    vertical-align: middle;
+    margin-right: 6px;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <div class="logo-badge">
+      <span class="dot"></span>
+      SNES Mini Utility
+    </div>
+    <h1>
+      <span class="from">.sfrom</span>
+      <span class="arrow"> → </span>
+      <span class="to">.sfc</span>
+    </h1>
+    <p class="subtitle">
+      Extract clean, emulator-compatible SNES ROMs<br>
+      from SNES Classic Mini game files. Runs entirely in your browser.
+    </p>
+  </header>
+
+  <!-- Drop Zone -->
+  <div class="drop-zone" id="drop-zone">
+    <input type="file" id="file-input" accept=".sfrom" multiple>
+    <div class="drop-icon">📦</div>
+    <div class="drop-label">Drop .sfrom files here</div>
+    <div class="drop-hint">or click to browse &nbsp;·&nbsp; <span>multiple files supported</span></div>
+  </div>
+
+  <!-- Convert Button -->
+  <button class="convert-btn" id="convert-btn">Convert All Files</button>
+
+  <!-- File Queue -->
+  <div id="file-queue">
+    <div class="queue-header">
+      <span class="queue-title">Queue</span>
+      <button class="clear-btn" id="clear-btn">✕ Clear</button>
+    </div>
+    <div class="file-list" id="file-list"></div>
+  </div>
+
+  <!-- Download All -->
+  <button class="download-all-btn" id="download-all-btn">⬇ Download All Converted Files</button>
+
+  <!-- Info Panel -->
+  <div class="info-panel">
+    <div class="info-grid">
+      <div class="info-item">
+        <div class="info-label">Header Size</div>
+        <div class="info-value"><code>0x30</code> (48 bytes) stripped from start</div>
+      </div>
+      <div class="info-item">
+        <div class="info-label">Footer</div>
+        <div class="info-value">Metadata footer removed, ROM size read from it</div>
+      </div>
+      <div class="info-item">
+        <div class="info-label">ROM Types</div>
+        <div class="info-value">LoROM <code>0x14</code> and HiROM <code>0x15</code> detected</div>
+      </div>
+      <div class="info-item">
+        <div class="info-label">Output</div>
+        <div class="info-value">Clean <code>.sfc</code> file, no copier header</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- How it works -->
+  <div class="how-it-works">
+    <div class="how-title">How it works</div>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-text">The <strong>.sfrom</strong> file begins with a <code>0x30</code> byte proprietary Nintendo header containing file offsets, Wii U game IDs, and PCM audio pointers.</div>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <div class="step-text">ROM data starts at <strong>offset 0x30</strong>. The footer (at the end) stores the exact ROM size, FPS setting, ROM type, and game preset ID.</div>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <div class="step-text">This tool reads the footer to get the <strong>exact ROM byte count</strong>, then extracts only those bytes starting from <code>0x30</code> — producing a clean SFC file.</div>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <div class="step-text">The resulting <strong>.sfc</strong> file is compatible with all major SNES emulators (RetroArch, Snes9x, ZSNES, bsnes, Mesen-S, etc.).</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const dropZone = document.getElementById('drop-zone');
+  const fileInput = document.getElementById('file-input');
+  const fileQueue = document.getElementById('file-queue');
+  const fileList = document.getElementById('file-list');
+  const convertBtn = document.getElementById('convert-btn');
+  const downloadAllBtn = document.getElementById('download-all-btn');
+  const clearBtn = document.getElementById('clear-btn');
+
+  let fileEntries = []; // { file, element, result }
+
+  // Enhancement chip names
+  const CHIP_NAMES = {
+    0x00: null,
+    0x02: 'DSP-1',
+    0x03: 'S-DD1',
+    0x04: 'Cx4',
+    0x05: 'MM-X fix',
+    0x06: 'SA-1', 0x07: 'SA-1', 0x08: 'SA-1',
+    0x09: 'SA-1', 0x0A: 'SA-1', 0x0B: 'SA-1',
+    0x0C: 'SuperFX'
+  };
+
+  // === Drag & Drop ===
+  dropZone.addEventListener('click', () => fileInput.click());
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('dragover');
+    addFiles([...e.dataTransfer.files]);
+  });
+  fileInput.addEventListener('change', () => addFiles([...fileInput.files]));
+
+  clearBtn.addEventListener('click', () => {
+    fileEntries = [];
+    fileList.innerHTML = '';
+    fileQueue.classList.remove('visible');
+    convertBtn.classList.remove('visible');
+    downloadAllBtn.classList.remove('visible');
+    fileInput.value = '';
+  });
+
+  function addFiles(files) {
+    const sfromFiles = files.filter(f => f.name.toLowerCase().endsWith('.sfrom'));
+    if (!sfromFiles.length) {
+      showToast('No .sfrom files found in selection.', 'error');
+      return;
+    }
+    sfromFiles.forEach(file => {
+      if (fileEntries.find(e => e.file.name === file.name && e.file.size === file.size)) return;
+      const entry = { file, element: null, result: null };
+      fileEntries.push(entry);
+      entry.element = createFileItem(entry);
+      fileList.appendChild(entry.element);
+    });
+    fileQueue.classList.add('visible');
+    convertBtn.classList.add('visible');
+    downloadAllBtn.classList.remove('visible');
+  }
+
+  function createFileItem(entry) {
+    const item = document.createElement('div');
+    item.className = 'file-item';
+    item.innerHTML = `
+      <div class="file-status-icon">📄</div>
+      <div class="file-info">
+        <div class="file-name">${escapeHtml(entry.file.name)}</div>
+        <div class="file-meta">${formatBytes(entry.file.size)} &nbsp;·&nbsp; Waiting</div>
+      </div>
+    `;
+    return item;
+  }
+
+  // === Conversion ===
+  convertBtn.addEventListener('click', async () => {
+    convertBtn.disabled = true;
+    convertBtn.innerHTML = '<span class="spinner"></span>Converting…';
+    downloadAllBtn.classList.remove('visible');
+
+    for (const entry of fileEntries) {
+      if (entry.result) continue;
+      setItemState(entry, 'processing', '⚙️', 'Processing…');
+      await sleep(30);
+      try {
+        entry.result = await convertSfrom(entry.file);
+        const info = entry.result.info;
+        const tags = buildTags(info);
+        setItemState(entry, 'success', '✅',
+          `${formatBytes(entry.result.romBytes.byteLength)} &nbsp;·&nbsp; ${tags}`,
+          entry.result
+        );
+      } catch (err) {
+        setItemState(entry, 'error', '❌', `Error: ${err.message}`);
+      }
+    }
+
+    const successes = fileEntries.filter(e => e.result);
+    convertBtn.innerHTML = 'Convert All Files';
+    convertBtn.disabled = false;
+
+    if (successes.length > 1) {
+      downloadAllBtn.classList.add('visible');
+    }
+  });
+
+  downloadAllBtn.addEventListener('click', () => {
+    fileEntries.filter(e => e.result).forEach((entry, i) => {
+      setTimeout(() => triggerDownload(entry.result.romBytes, entry.result.filename), i * 100);
+    });
+  });
+
+  function setItemState(entry, state, icon, metaHtml, result = null) {
+    const el = entry.element;
+    el.className = `file-item ${state}`;
+    el.querySelector('.file-status-icon').textContent = icon;
+    el.querySelector('.file-meta').innerHTML = metaHtml;
+
+    // Add or remove download button
+    const existing = el.querySelector('.download-btn');
+    if (existing) existing.remove();
+
+    if (result) {
+      const btn = document.createElement('button');
+      btn.className = 'download-btn';
+      btn.innerHTML = '⬇ .sfc';
+      btn.addEventListener('click', () => triggerDownload(result.romBytes, result.filename));
+      el.appendChild(btn);
+    }
+  }
+
+  // === Core SFROM Parser ===
+  async function convertSfrom(file) {
+    const buffer = await file.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    const view = new DataView(buffer);
+
+    // Validate magic / structure
+    // SNES Mini sfrom: first 4 bytes = 0x00 0x00 0x01 0x00 (little endian 0x00010000... actually 0x00000100)
+    const magic = view.getUint32(0x00, true);
+    if (magic !== 0x00000100) {
+      // Try to be lenient — might still be valid
+      // Check if file is large enough to have a footer
+      if (buffer.byteLength < 0x30 + 0x23) {
+        throw new Error('File too small to be a valid .sfrom');
+      }
+    }
+
+    // Read header fields
+    const fileSize = view.getUint32(0x04, true);
+    const romOffset = view.getUint32(0x08, true); // Usually 0x30
+    const footerOffset = view.getUint32(0x14, true);
+
+    if (romOffset > buffer.byteLength) {
+      throw new Error('Invalid ROM offset in header');
+    }
+
+    // Footer starts at footerOffset
+    // Footer layout:
+    // 0x00: FPS (1 byte)
+    // 0x01: ROM size (4 bytes, LE)
+    // 0x05: PCM size (4 bytes, LE)
+    // 0x09: PCM footer size (4 bytes, LE)
+    // 0x0D: Preset ID (2 bytes, LE)
+    // 0x0F: Players (1 byte)
+    // 0x10: Volume (1 byte)
+    // 0x11: ROM Type (1 byte) 0x14=LoROM 0x15=HiROM
+    // 0x12: Enhancement Chip (1 byte)
+
+    let romSize, fps, romType, chipVal, presetId;
+
+    if (footerOffset + 0x13 <= buffer.byteLength) {
+      fps       = bytes[footerOffset + 0x00];
+      romSize   = view.getUint32(footerOffset + 0x01, true);
+      presetId  = view.getUint16(footerOffset + 0x0D, true);
+      romType   = bytes[footerOffset + 0x11];
+      chipVal   = bytes[footerOffset + 0x12];
+    } else {
+      // Fallback: infer ROM size from file size - header - footer size estimate
+      romSize = buffer.byteLength - romOffset - 0x23;
+      fps = 0x3C;
+      romType = 0x14;
+      chipVal = 0x00;
+      presetId = 0;
+    }
+
+    // Clamp rom size to what's available
+    const maxRomSize = buffer.byteLength - romOffset;
+    if (romSize <= 0 || romSize > maxRomSize) {
+      // Use available data minus reasonable footer
+      romSize = maxRomSize;
+      // Try to align to nearest SNES power-of-two ROM size
+      const snesRomSizes = [0x80000, 0x100000, 0x200000, 0x400000, 0x600000];
+      for (const sz of snesRomSizes) {
+        if (maxRomSize >= sz) romSize = sz;
+      }
+    }
+
+    // Extract ROM bytes
+    const romBytes = buffer.slice(romOffset, romOffset + romSize);
+
+    // Build output filename: replace .sfrom with .sfc
+    const filename = file.name.replace(/\.sfrom$/i, '.sfc');
+
+    const info = { fps, romType, chipVal, presetId, romSize };
+
+    return { romBytes, filename, info };
+  }
+
+  function buildTags(info) {
+    let tags = '';
+    const romTypeName = info.romType === 0x15 ? 'HiROM' : 'LoROM';
+    const romClass = info.romType === 0x15 ? 'hirom' : 'lorom';
+    tags += `<span class="tag ${romClass}">${romTypeName}</span>`;
+    if (info.fps === 0x32) {
+      tags += `<span class="tag fps50">50 FPS</span>`;
+    } else {
+      tags += `<span class="tag fps60">60 FPS</span>`;
+    }
+    const chip = CHIP_NAMES[info.chipVal];
+    if (chip) tags += `<span class="tag chip">${chip}</span>`;
+    return tags + ` <span style="opacity:0.5">Preset #${info.presetId}</span>`;
+  }
+
+  function triggerDownload(buffer, filename) {
+    const blob = new Blob([buffer], { type: 'application/octet-stream' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+  }
+
+  // === Helpers ===
+  function formatBytes(b) {
+    if (b < 1024) return b + ' B';
+    if (b < 1024 * 1024) return (b / 1024).toFixed(1) + ' KB';
+    return (b / (1024 * 1024)).toFixed(2) + ' MB';
+  }
+
+  function escapeHtml(s) {
+    return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  function showToast(msg, type) {
+    const t = document.createElement('div');
+    t.style.cssText = `
+      position:fixed; bottom:24px; left:50%; transform:translateX(-50%);
+      background:${type==='error'?'#ef4444':'#22c55e'};
+      color:white; padding:10px 20px; border-radius:10px;
+      font-family:'Space Mono',monospace; font-size:0.78rem;
+      z-index:999; animation:slideIn 0.3s ease;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+    `;
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 3000);
+  }
+</script>
+</body>
+</html>
