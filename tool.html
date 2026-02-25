@@ -1102,6 +1102,27 @@
     dlog(`CRC32: ${romCrc} → ${knownEntry ? knownEntry.name : 'unknown title'}`);
     dlog(`Output size: ${romSize} bytes (${(romSize/1024).toFixed(1)} KB)`);
 
+    // Dump the PCM footer bytes so we can reverse-engineer its structure.
+    // The footer sits between the usable PCM sample data and the metadata footer.
+    // It likely contains per-sample tuning/rate values — critical for pitch accuracy.
+    if (pcmFooterSize > 0) {
+      const pcmFooterOffset = romOffset + romSize + usablePcmSize;
+      if (pcmFooterOffset + pcmFooterSize <= buffer.byteLength) {
+        const pcmFooterBytes = new Uint8Array(buffer, pcmFooterOffset, Math.min(pcmFooterSize, 128));
+        // Log as rows of 16 hex bytes so structure is visible
+        let hexDump = `PCM footer (${pcmFooterSize} bytes) at 0x${pcmFooterOffset.toString(16)}:`;
+        for (let i = 0; i < pcmFooterBytes.length; i += 16) {
+          const row = Array.from(pcmFooterBytes.slice(i, i + 16))
+            .map(b => b.toString(16).padStart(2, '0')).join(' ');
+          hexDump += `\n  +${i.toString(16).padStart(3,'0')}: ${row}`;
+        }
+        if (pcmFooterSize > 128) hexDump += `\n  ... (truncated, showing first 128 of ${pcmFooterSize} bytes)`;
+        dlog(hexDump);
+      } else {
+        dwarn(`PCM footer offset 0x${pcmFooterOffset.toString(16)} out of bounds`);
+      }
+    }
+
     // Extract PCM data that follows the ROM in the .sfrom layout:
     // [0x30 header][ROM data][PCM data][PCM footer][metadata footer]
     //
