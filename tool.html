@@ -789,6 +789,16 @@
       throw new Error('Invalid ROM offset in header');
     }
 
+    // Fix: Validate footerOffset before trusting it (Fix #2)
+    if (footerOffset <= romOffset || footerOffset > buffer.byteLength) {
+      throw new Error('Invalid footer offset');
+    }
+
+    // Fix: Warn on file size mismatch (Fix #7)
+    if (fileSize !== buffer.byteLength) {
+      console.warn('sfrom header file size mismatch:', fileSize, 'vs', buffer.byteLength);
+    }
+
     // Footer starts at footerOffset
     // Footer layout:
     // 0x00: FPS (1 byte)
@@ -798,7 +808,7 @@
     // 0x0D: Preset ID (2 bytes, LE)
     // 0x0F: Players (1 byte)
     // 0x10: Volume (1 byte)
-    // 0x11: ROM Type (1 byte) 0x14=LoROM 0x15=HiROM
+    // 0x11: ROM Type (1 byte) 0x14=LoROM, 0x15=HiROM, 0x35=ExHiROM
     // 0x12: Enhancement Chip (1 byte)
 
     let romSize, fps, romType, chipVal, presetId, pcmSize = 0, pcmFooterSize = 0;
@@ -815,23 +825,24 @@
       fps = 0x3C; romType = 0x14; chipVal = 0x00; presetId = 0;
     }
 
-    // FIX: sfrom layout after romOffset = [ROM][PCM data][PCM footer][metadata footer]
-    // Use pcmSize + pcmFooterSize to compute the true upper boundary of ROM data.
-    // Previously, the clamp used the full file size and could bleed PCM bytes into the
-    // ROM slice, corrupting audio sample tables and causing incorrect playback.
-    const safeMax = footerOffset - pcmSize - pcmFooterSize - romOffset;
+    // sfrom layout after romOffset = [ROM][PCM data][PCM footer][metadata footer]
+    // Fix #1: clamp safeMax to prevent underflow if PCM values are bogus
+    const safeMax = Math.max(0, footerOffset - pcmSize - pcmFooterSize - romOffset);
+    if (safeMax <= 0 || safeMax > buffer.byteLength) {
+      throw new Error('Invalid footer/PCM layout detected');
+    }
 
-    const snesRomSizes = [0x80000, 0x100000, 0x200000, 0x300000, 0x400000, 0x600000];
+    // Fix #3: use safeMax directly, aligned to SNES bank boundary (0x8000)
     if (romSize <= 0 || romSize > safeMax) {
-      // Footer romSize missing or bogus — snap to largest standard size within safe boundary
-      romSize = 0;
-      for (const sz of snesRomSizes) {
-        if (safeMax >= sz) romSize = sz;
-      }
-      if (!romSize) romSize = Math.max(0, safeMax);
+      romSize = safeMax & ~0x7FFF; // align down to nearest bank
     }
 
     if (romSize <= 0) throw new Error('Could not determine a valid ROM size');
+
+    // Fix #8: explicit bounds check before slicing
+    if (romOffset + romSize > buffer.byteLength) {
+      throw new Error('ROM slice exceeds file bounds');
+    }
 
     // Extract ROM bytes
     const romBytes = buffer.slice(romOffset, romOffset + romSize);
@@ -850,11 +861,26 @@
     // Bit 4 is the speed flag: 0 = SlowROM (2.68 MHz), 1 = FastROM (3.58 MHz).
     // Nintendo forces FastROM. LoROM games are almost always SlowROM (0x20),
     // so we strip the fast bit back off for LoROM titles.
-    const speedByteOffset = (romType === 0x15) ? 0xFFD5 : 0x7FD5;
-    if (speedByteOffset < rom.length) {
+    // Fix #5: validate extracted ROM contains a plausible SNES internal header
+    const headerBase = (romType === 0x15) ? 0xFFC0 : 0x7FC0;
+    if (headerBase + 0x20 >= rom.length) {
+      throw new Error('Extracted ROM too small to contain SNES header');
+    }
+    const checksum   = (rom[headerBase + 0x1E] | (rom[headerBase + 0x1F] << 8));
+    const complement = (rom[headerBase + 0x1C] | (rom[headerBase + 0x1D] << 8));
+    if (((checksum + complement) & 0xFFFF) !== 0xFFFF) {
+      console.warn('SNES header checksum invalid — extraction boundary may be off');
+    }
+
+    // Fix #4: speed byte patch — only for LoROM, only exact Nintendo-patched values,
+    // never touch SA-1 (0x06–0x0B) or SuperFX (0x0C) titles which legitimately use FastROM
+    // Fix #6: ExHiROM (0x35) shares HiROM header location
+    const speedByteOffset = (romType === 0x15 || romType === 0x35) ? 0xFFD5 : 0x7FD5;
+    const isSA1orFX = (chipVal >= 0x06 && chipVal <= 0x0C);
+    if (!isSA1orFX && romType === 0x14 && speedByteOffset < rom.length) {
       const spd = rom[speedByteOffset];
-      if (romType !== 0x15 && (spd & 0x10)) {
-        rom[speedByteOffset] = spd & ~0x10; // restore SlowROM
+      if (spd === 0x30 || spd === 0x31) {
+        rom[speedByteOffset] = spd & 0xEF; // clear fast bit only
       }
     }
 
