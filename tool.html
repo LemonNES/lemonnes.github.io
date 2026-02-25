@@ -948,30 +948,71 @@
     if (romSize > safeMax) throw new Error('Footer ROM size exceeds safe boundary');
     if (romOffset + romSize > buffer.byteLength) throw new Error('ROM slice exceeds file bounds');
 
-    // Determine SNES internal header base early so we can cross-reference the size
-    const headerBase = (romType === 0x15 || romType === 0x35) ? 0xFFC0 : 0x7FC0;
+    // ----------------------------------------------------------------
+    // ROM type detection: probe the internal SNES header directly.
+    //
+    // The footer's romType byte is used as the initial guess, but it
+    // can be wrong or absent (bad dump, non-standard sfrom). We verify
+    // by scoring both candidate header locations (LoROM 0x7FC0 and
+    // HiROM 0xFFC0) against their SNES checksums and picking the winner.
+    // Only if neither passes do we fall back to the footer value.
+    //
+    // Scoring: a valid SNES internal header has checksum ^ complement == 0xFFFF.
+    // We also check that the ROM-type byte at +0x15 is plausible.
+    // ----------------------------------------------------------------
+    function scoreHeader(rom, base) {
+      if (base + 0x20 > rom.length) return -1;
+      const checksum   = rom[base + 0x1E] | (rom[base + 0x1F] << 8);
+      const complement = rom[base + 0x1C] | (rom[base + 0x1D] << 8);
+      const checksumOk = ((checksum ^ complement) & 0xFFFF) === 0xFFFF;
+      // ROM type byte at base+0x15: low nibble 0x0-0x3 is valid range
+      const rtByte = rom[base + 0x15];
+      const rtPlausible = (rtByte & 0xF) <= 0x5;
+      return (checksumOk ? 2 : 0) + (rtPlausible ? 1 : 0);
+    }
+
+    // Take a provisional slice using footer-declared romSize to probe headers
+    const provisionalRom = new Uint8Array(buffer, romOffset, romSize);
+
+    const scoreLoROM = scoreHeader(provisionalRom, 0x7FC0);
+    const scoreHiROM = scoreHeader(provisionalRom, 0xFFC0);
+    const scoreExHiROM = scoreHeader(provisionalRom, 0x7FC0); // ExHiROM uses LoROM header location
+
+    let headerBase;
+    let detectedRomType;
+
+    if (scoreHiROM > scoreLoROM) {
+      headerBase = 0xFFC0;
+      detectedRomType = 0x15; // HiROM
+    } else if (scoreLoROM >= scoreHiROM) {
+      headerBase = 0x7FC0;
+      detectedRomType = 0x14; // LoROM
+    } else {
+      // Neither passes — trust the footer as last resort
+      headerBase = (romType === 0x15 || romType === 0x35) ? 0xFFC0 : 0x7FC0;
+      detectedRomType = romType;
+    }
+
+    if (detectedRomType !== romType) {
+      console.warn(`ROM type mismatch: footer says 0x${romType.toString(16)}, internal header says 0x${detectedRomType.toString(16)} — using internal`);
+      romType = detectedRomType;
+    }
 
     // Cross-reference footer size against the internal SNES header's own size byte.
-    // Byte at headerBase + 0x17 (i.e. 0x7FD7 for LoROM, 0xFFD7 for HiROM) holds the
-    // ROM size exponent n, where actual size = 2^n * 1024 bytes.
-    // If the footer says more bytes than the internal header claims, trim the excess —
-    // those extra bytes are padding / metadata and will confuse emulator memory mirroring.
-    if (headerBase + 0x18 <= romOffset + romSize) {
-      const tempRom = new Uint8Array(buffer, romOffset, romSize);
-      const localBase = headerBase; // relative to start of ROM slice
-      if (localBase + 0x18 <= tempRom.length) {
-        const sizeExponent = tempRom[localBase + 0x17];
-        if (sizeExponent >= 8 && sizeExponent <= 16) { // sanity: 256 KB – 64 MB
-          const internalRomSize = Math.pow(2, sizeExponent) * 1024;
-          if (romSize > internalRomSize) {
-            console.log(`Trimming ${romSize - internalRomSize} bytes of junk from footer (footer=${romSize}, internal=${internalRomSize})`);
-            romSize = internalRomSize;
-          }
+    // Byte at headerBase + 0x17 holds the ROM size exponent n: actual size = 2^n * 1024.
+    // If the footer says more bytes than the internal header claims, trim the excess.
+    if (headerBase + 0x18 <= provisionalRom.length) {
+      const sizeExponent = provisionalRom[headerBase + 0x17];
+      if (sizeExponent >= 8 && sizeExponent <= 16) { // sanity: 256 KB – 64 MB
+        const internalRomSize = Math.pow(2, sizeExponent) * 1024;
+        if (romSize > internalRomSize) {
+          console.log(`Trimming ${romSize - internalRomSize} bytes (footer=${romSize}, internal=${internalRomSize})`);
+          romSize = internalRomSize;
         }
       }
     }
 
-    // Extract ROM bytes
+    // Extract final ROM bytes using the verified size
     const romBytes = buffer.slice(romOffset, romOffset + romSize);
     const rom = new Uint8Array(romBytes);
     if (headerBase + 0x20 >= rom.length) {
@@ -980,7 +1021,7 @@
     const checksum   = (rom[headerBase + 0x1E] | (rom[headerBase + 0x1F] << 8));
     const complement = (rom[headerBase + 0x1C] | (rom[headerBase + 0x1D] << 8));
     if (((checksum + complement) & 0xFFFF) !== 0xFFFF) {
-      console.warn('SNES header checksum invalid — extraction boundary may be off');
+      console.warn('SNES header checksum mismatch after extraction');
     }
 
     // CRC32 the raw (PCMF-patched Nintendo) ROM slice to identify the title
