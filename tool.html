@@ -1106,7 +1106,7 @@
     // The footer sits between the usable PCM sample data and the metadata footer.
     // It likely contains per-sample tuning/rate values — critical for pitch accuracy.
     if (pcmFooterSize > 0) {
-      const pcmFooterOffset = romOffset + romSize + usablePcmSize;
+      const pcmFooterOffset = romOffset + romSize + Math.max(0, pcmSize - pcmFooterSize);
       if (pcmFooterOffset + pcmFooterSize <= buffer.byteLength) {
         const pcmFooterBytes = new Uint8Array(buffer, pcmFooterOffset, Math.min(pcmFooterSize, 128));
         // Log as rows of 16 hex bytes so structure is visible
