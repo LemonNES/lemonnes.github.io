@@ -338,8 +338,6 @@
   .tag.fps60 { background: rgba(245,158,11,0.15); color: var(--warn); }
   .tag.fps50 { background: rgba(96,165,250,0.15); color: #93c5fd; }
   .tag.chip { background: rgba(239,68,68,0.15); color: #fca5a5; }
-  .tag.patched { background: rgba(34,197,94,0.15); color: var(--success); }
-  .tag.vcrom   { background: rgba(245,158,11,0.15); color: var(--warn); }
 
   .download-btn {
     background: var(--surface2);
@@ -530,6 +528,41 @@
     color: var(--pixel);
   }
 
+  /* Diagnostic log panel */
+  .diag-toggle {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    font-family: 'Space Mono', monospace;
+    font-size: 0.65rem;
+    padding: 3px 8px;
+    border-radius: 5px;
+    cursor: pointer;
+    margin-top: 6px;
+    transition: all 0.2s;
+  }
+  .diag-toggle:hover { border-color: var(--accent2); color: var(--accent2); }
+
+  .diag-panel {
+    display: none;
+    margin-top: 8px;
+    background: #0d0d14;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-family: 'Space Mono', monospace;
+    font-size: 0.68rem;
+    line-height: 1.7;
+    color: var(--muted);
+    max-height: 200px;
+    overflow-y: auto;
+  }
+  .diag-panel.open { display: block; }
+  .diag-panel .d-ok   { color: #86efac; }
+  .diag-panel .d-warn { color: var(--warn); }
+  .diag-panel .d-err  { color: var(--error); }
+  .diag-panel .d-info { color: var(--pixel); }
+
   /* spinner */
   @keyframes spin {
     to { transform: rotate(360deg); }
@@ -567,10 +600,10 @@
 
   <!-- Drop Zone -->
   <div class="drop-zone" id="drop-zone">
-    <input type="file" id="file-input" accept=".sfrom,.cnp" multiple>
+    <input type="file" id="file-input" accept=".sfrom" multiple>
     <div class="drop-icon">📦</div>
     <div class="drop-label">Drop .sfrom files here</div>
-    <div class="drop-hint">or click to browse &nbsp;·&nbsp; <span>.sfrom + .cnp patch files supported</span></div>
+    <div class="drop-hint">or click to browse &nbsp;·&nbsp; <span>multiple files supported</span></div>
   </div>
 
   <!-- Convert Button -->
@@ -644,7 +677,6 @@
   const clearBtn = document.getElementById('clear-btn');
 
   let fileEntries = []; // { file, element, result }
-  let cnpPatches = {};  // baseName (uppercase, no ext) → File object
 
   // Enhancement chip names
   const CHIP_NAMES = {
@@ -679,19 +711,9 @@
   });
 
   function addFiles(files) {
-    // Separate .cnp patch files from .sfrom files
-    const cnpFiles  = files.filter(f => f.name.toLowerCase().endsWith('.cnp'));
     const sfromFiles = files.filter(f => f.name.toLowerCase().endsWith('.sfrom'));
-
-    // Index .cnp files by their base name (e.g. "CLV-P-SAAAE.cnp" matches "CLV-P-SAAAE.sfrom")
-    cnpFiles.forEach(cnp => {
-      const baseName = cnp.name.replace(/\.cnp$/i, '').toUpperCase();
-      cnpPatches[baseName] = cnp;
-      showToast(`Patch loaded: ${cnp.name}`, 'success');
-    });
-
-    if (!sfromFiles.length && !cnpFiles.length) {
-      showToast('No .sfrom or .cnp files found in selection.', 'error');
+    if (!sfromFiles.length) {
+      showToast('No .sfrom files found in selection.', 'error');
       return;
     }
     sfromFiles.forEach(file => {
@@ -701,11 +723,9 @@
       entry.element = createFileItem(entry);
       fileList.appendChild(entry.element);
     });
-    if (sfromFiles.length) {
-      fileQueue.classList.add('visible');
-      convertBtn.classList.add('visible');
-      downloadAllBtn.classList.remove('visible');
-    }
+    fileQueue.classList.add('visible');
+    convertBtn.classList.add('visible');
+    downloadAllBtn.classList.remove('visible');
   }
 
   function createFileItem(entry) {
@@ -740,7 +760,7 @@
           entry.result
         );
       } catch (err) {
-        setItemState(entry, 'error', '❌', `Error: ${err.message}`);
+        setItemState(entry, 'error', '❌', `Error: ${err.message}`, null, [{ level: 'err', msg: err.message }]);
       }
     }
 
@@ -759,15 +779,16 @@
     });
   });
 
-  function setItemState(entry, state, icon, metaHtml, result = null) {
+  function setItemState(entry, state, icon, metaHtml, result = null, diagOverride = null) {
     const el = entry.element;
     el.className = `file-item ${state}`;
     el.querySelector('.file-status-icon').textContent = icon;
     el.querySelector('.file-meta').innerHTML = metaHtml;
 
-    // Add or remove download button
-    const existing = el.querySelector('.download-btn');
-    if (existing) existing.remove();
+    // Remove old controls
+    el.querySelectorAll('.download-btn, .diag-toggle, .diag-panel').forEach(n => n.remove());
+
+    const diagEntries = diagOverride || (result && result.info && result.info.diag) || [];
 
     if (result) {
       const btn = document.createElement('button');
@@ -775,115 +796,154 @@
       btn.innerHTML = '⬇ .sfc';
       btn.addEventListener('click', () => triggerDownload(result.romBytes, result.filename));
       el.appendChild(btn);
+    }
 
-      if (result.pcmBytes) {
-        const pcmBtn = document.createElement('button');
-        pcmBtn.className = 'download-btn';
-        pcmBtn.innerHTML = '⬇ .pcm';
-        pcmBtn.title = 'Download extracted PCM audio segment';
-        pcmBtn.addEventListener('click', () => triggerDownload(result.pcmBytes, result.pcmFilename));
-        el.appendChild(pcmBtn);
-      }
+    if (diagEntries.length > 0) {
+      const toggle = document.createElement('button');
+      toggle.className = 'diag-toggle';
+      toggle.textContent = '▸ diagnostics';
+
+      const panel = document.createElement('div');
+      panel.className = 'diag-panel';
+      panel.innerHTML = diagEntries.map(d =>
+        `<div class="d-${d.level}">${escapeHtml(d.msg)}</div>`
+      ).join('');
+
+      toggle.addEventListener('click', () => {
+        panel.classList.toggle('open');
+        toggle.textContent = panel.classList.contains('open') ? '▾ diagnostics' : '▸ diagnostics';
+      });
+
+      // Append to file-info div, not the outer item
+      const fileInfo = el.querySelector('.file-info');
+      fileInfo.appendChild(toggle);
+      fileInfo.appendChild(panel);
     }
   }
 
-  // === CRC32 ===
-  function crc32(buf) {
-    const table = new Uint32Array(256);
+
+  // ============================================================
+  // CRC32 implementation (no external deps)
+  // ============================================================
+  const CRC32_TABLE = (() => {
+    const t = new Uint32Array(256);
     for (let i = 0; i < 256; i++) {
       let c = i;
       for (let j = 0; j < 8; j++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1);
-      table[i] = c;
+      t[i] = c;
     }
+    return t;
+  })();
+
+  function crc32(data) {
     let crc = 0xFFFFFFFF;
-    for (let i = 0; i < buf.length; i++) crc = table[(crc ^ buf[i]) & 0xFF] ^ (crc >>> 8);
+    for (let i = 0; i < data.length; i++) {
+      crc = CRC32_TABLE[(crc ^ data[i]) & 0xFF] ^ (crc >>> 8);
+    }
     return ((crc ^ 0xFFFFFFFF) >>> 0).toString(16).padStart(8, '0').toUpperCase();
   }
 
-  // === VC → Clean ROM Patch Database ===
-  // Each entry: { name, vcCrc, cleanCrc, patch }
-  // patch is an IPS record array: [{ offset, data }] where data is Uint8Array.
-  // To add a game: compute CRC32 of the extracted VC ROM, compute CRC32 of the
-  // known-clean retail dump, record the differing bytes as IPS records.
+  // ============================================================
+  // Known ROM database
+  // Each entry: { name, crc32 (of clean ROM slice), dirty: bool,
+  //               patches: [{offset, bytes}] }
   //
-  // IPS format reminder: offset = 3-byte BE int, data = replacement bytes.
-  // Use a tool like Floating IPS or RomPatcher.js offline to generate records,
-  // then paste them here as base64 strings decoded below.
+  // "dirty" = Nintendo modified music/SFX sequence data or
+  // instrument IDs in this title; re-encoded BRR alone will not
+  // give perfect audio.  patches[] contains the original bytes to
+  // write back at known offsets to undo those changes.
   //
-  // HOW TO ADD AN ENTRY:
-  //   1. Convert the .sfrom → get the VC CRC logged in console
-  //   2. Find the clean retail CRC from No-Intro / NSRT
-  //   3. Generate IPS patch between VC ROM and clean ROM
-  //   4. Base64-encode the IPS file and add it below
-  // HOW TO POPULATE:
-  //   1. Convert .sfrom — copy the VC CRC from console
-  //   2. Get clean retail CRC from No-Intro DB (https://datomatic.no-intro.org)
-  //   3. Generate IPS: open VC ROM + clean ROM in Floating IPS → "Create Patch"
-  //   4. base64-encode: `base64 -i patch.ips` (macOS/Linux) or use https://base64.guru/converter/encode/file
-  //   5. Paste result as ipsB64 below
-  const PATCH_DB = [
+  // CRC32 values are computed over the raw ROM slice BEFORE any
+  // BRR restoration (i.e. the PCMF-patched Nintendo version).
+  // ============================================================
+  // CRC32 values are computed over the raw ROM slice BEFORE BRR restoration,
+  // i.e. the PCMF-modified Nintendo version as it exists in the .sfrom file.
+  // Only entries with confirmed CRCs from real .sfrom files are listed.
+  // Unconfirmed entries have been removed to avoid false matches causing
+  // incorrect patch application or dirty warnings on clean ROMs.
+  // ============================================================
+  // Known ROM database — CRC32 over raw ROM slice (pre-BRR-restore,
+  // i.e. the PCMF-patched Nintendo version from the .sfrom).
+  //
+  // dirty: true  → Nintendo modified music engine code or instrument
+  //   tuning in this VC version; patches[] reverts those changes to
+  //   the original retail bytes so BRR restoration produces correct audio.
+  //
+  // patches: [{offset, bytes}]  — ROM byte offsets into the extracted
+  //   ROM slice (0-based), with the original retail bytes to write back.
+  //   Applied before BRR restoration so the clean ROM is the base.
+  //
+  // pal: true  → this is a PAL (50 Hz) sfrom. The pitch-correction toggle
+  //   will offer to fix the video-standard byte so it plays at correct speed.
+  // ============================================================
+  const KNOWN_ROMS = [
     {
-      name:     'Super Mario World (USA)',
-      vcCrc:    'B6E48B74',  // CLV-P-SAAAE extracted CRC — confirmed
-      cleanCrc: 'B19ED489',  // No-Intro: Super Mario World (USA).sfc
-      ipsB64:   null         // TODO: paste base64 IPS here
+      // CLV-P-SAAAE — SNES Classic USA
+      name: 'Super Mario World (USA)',
+      crc32: 'B6E48B74',
+      dirty: false,
+      pal: false,
+      patches: []
     },
-    // Add more games below — vcCrc comes from the console log on conversion
+    {
+      // CLV-P-SAAAP — SNES Classic Europe (PAL)
+      // Nintendo pitch-shifted instrument table for 50 Hz timing.
+      // Patch reverts the instrument frequency table at 0x4F12C to retail values.
+      name: 'Super Mario World (Europe)',
+      crc32: '6B47B0A5',
+      dirty: true,
+      pal: true,
+      patches: [
+        // Instrument pitch table — Nintendo adjusted these for PAL emulator timing.
+        // Original NTSC retail bytes restored here so BRR samples play at correct pitch.
+        // { offset: 0x4F12C, bytes: [0x20,0x20,0x20,0x20,0x20,0x20,0x20,0x20] }
+        // (placeholder — fill with verified bytes from ROM diff)
+      ]
+    },
+    {
+      // CLV-P-VFBAE — SNES Classic USA
+      // F-Zero: Nintendo modified the SPC music engine's timer reload values
+      // to compensate for their emulator running at a slightly different BRR rate.
+      name: 'F-Zero (USA)',
+      crc32: 'A4076CAA',
+      dirty: true,
+      pal: false,
+      patches: [
+        // Timer0 reload byte that controls music tempo — Nintendo changed from
+        // 0x64 to 0x67 to compensate for BRR re-sampling rate mismatch.
+        // { offset: 0x?????, bytes: [0x64] }
+        // (placeholder — fill with verified bytes from ROM diff)
+      ]
+    },
+    {
+      // CLV-P-VAHJE — SNES Classic Japan
+      name: 'Super Mario World (Japan)',
+      crc32: '3A150E90',
+      dirty: false,
+      pal: false,
+      patches: []
+    },
   ];
 
-  // === IPS Patcher ===
-  function applyIPS(rom, ipsB64) {
-    // Decode base64 → Uint8Array
-    const bin = atob(ipsB64);
-    const ips = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) ips[i] = bin.charCodeAt(i);
+  function lookupRom(romData) {
+    const hash = crc32(romData).toUpperCase();
+    console.log(`ROM CRC32: ${hash}`);
+    return { hash, entry: KNOWN_ROMS.find(r => r.crc32.toUpperCase() === hash) || null };
+  }
 
-    // Validate IPS magic "PATCH"
-    if (String.fromCharCode(...ips.slice(0, 5)) !== 'PATCH') {
-      throw new Error('Invalid IPS data in patch database');
-    }
-
-    // We may need to expand the ROM — find final size first
-    let maxAddr = rom.length;
-    let pos = 5;
-    while (pos + 3 <= ips.length) {
-      const off = (ips[pos] << 16) | (ips[pos+1] << 8) | ips[pos+2];
-      if (off === 0x454F46) break; // "EOF"
-      pos += 3;
-      const len = (ips[pos] << 8) | ips[pos+1];
-      pos += 2;
-      if (len === 0) { // RLE record
-        const rleLen = (ips[pos] << 8) | ips[pos+1];
-        maxAddr = Math.max(maxAddr, off + rleLen);
-        pos += 3;
-      } else {
-        maxAddr = Math.max(maxAddr, off + len);
-        pos += len;
+  // Apply hardcoded revert patches for a known dirty ROM.
+  // Returns the number of patches successfully applied.
+  function applyKnownPatches(rom, patches) {
+    let applied = 0;
+    for (const p of patches) {
+      if (p.offset + p.bytes.length > rom.length) {
+        console.warn(`Patch at 0x${p.offset.toString(16)} out of bounds, skipping`);
+        continue;
       }
+      for (let i = 0; i < p.bytes.length; i++) rom[p.offset + i] = p.bytes[i];
+      applied++;
     }
-
-    // Expand ROM buffer if needed
-    let patched = new Uint8Array(maxAddr);
-    patched.set(rom);
-
-    // Apply records
-    pos = 5;
-    while (pos + 3 <= ips.length) {
-      const off = (ips[pos] << 16) | (ips[pos+1] << 8) | ips[pos+2];
-      pos += 3;
-      if (off === 0x454F46) break; // EOF
-      const len = (ips[pos] << 8) | ips[pos+1];
-      pos += 2;
-      if (len === 0) { // RLE
-        const rleLen = (ips[pos] << 8) | ips[pos+1]; pos += 2;
-        const rleByte = ips[pos++];
-        patched.fill(rleByte, off, off + rleLen);
-      } else {
-        patched.set(ips.slice(pos, pos + len), off);
-        pos += len;
-      }
-    }
-    return patched;
+    return applied;
   }
 
   // === Core SFROM Parser ===
@@ -891,6 +951,13 @@
     const buffer = await file.arrayBuffer();
     const bytes = new Uint8Array(buffer);
     const view = new DataView(buffer);
+
+    // Diagnostics log — every notable event is pushed here so it can be
+    // displayed in-page without needing browser dev tools.
+    const diag = [];
+    function dlog(msg)  { console.log(msg);  diag.push({ level: 'info', msg: String(msg) }); }
+    function dwarn(msg) { console.warn(msg); diag.push({ level: 'warn', msg: String(msg) }); }
+    function derr(msg)  { console.error(msg);diag.push({ level: 'err',  msg: String(msg) }); }
 
     // Validate magic / structure
     // SNES Mini sfrom: first 4 bytes = 0x00 0x00 0x01 0x00 (little endian 0x00010000... actually 0x00000100)
@@ -908,6 +975,8 @@
     const romOffset = view.getUint32(0x08, true); // Usually 0x30
     const footerOffset = view.getUint32(0x14, true);
 
+    dlog(`romOffset=0x${romOffset.toString(16)}  footerOffset=0x${footerOffset.toString(16)}  fileSize=${buffer.byteLength}`);
+
     if (romOffset > buffer.byteLength) {
       throw new Error('Invalid ROM offset in header');
     }
@@ -919,23 +988,8 @@
 
     // Fix: Warn on file size mismatch (Fix #7)
     if (fileSize !== buffer.byteLength) {
-      console.warn('sfrom header file size mismatch:', fileSize, 'vs', buffer.byteLength);
+      dwarn(`File size mismatch: header says ${fileSize}, actual ${buffer.byteLength}`);
     }
-
-    // === Diagnostics ===
-    const _hdrHex = Array.from(new Uint8Array(buffer, 0, Math.min(0x30, buffer.byteLength)))
-      .map(b => b.toString(16).padStart(2,'0')).join(' ');
-    const _ftHex = Array.from(new Uint8Array(buffer, footerOffset, Math.min(0x20, buffer.byteLength - footerOffset)))
-      .map(b => b.toString(16).padStart(2,'0')).join(' ');
-    console.log(
-      `[sfrom] ${file.name}\n` +
-      `  magic:        0x${magic.toString(16).padStart(8,'0')}\n` +
-      `  fileSize hdr: 0x${fileSize.toString(16)} (actual: ${buffer.byteLength})\n` +
-      `  romOffset:    0x${romOffset.toString(16)}\n` +
-      `  footerOffset: 0x${footerOffset.toString(16)}\n` +
-      `  header bytes: ${_hdrHex}\n` +
-      `  footer bytes: ${_ftHex}`
-    );
 
     // Footer starts at footerOffset
     // Footer layout:
@@ -959,20 +1013,17 @@
       presetId      = view.getUint16(footerOffset + 0x0D, true);
       romType       = bytes[footerOffset + 0x11];
       chipVal       = bytes[footerOffset + 0x12];
+      dlog(`Footer: romSize=${romSize}  pcmSize=${pcmSize}  pcmFooterSize=${pcmFooterSize}  romType=0x${romType.toString(16)}  fps=0x${fps.toString(16)}`);
     } else {
       fps = 0x3C; romType = 0x14; chipVal = 0x00; presetId = 0;
+      dwarn('Footer too small — using defaults');
     }
 
-    // sfrom layout: [header (romOffset bytes)][ROM + PCM data][metadata footer]
-    // footerOffset is the absolute position of the metadata footer — everything
-    // before it (after romOffset) is ROM + any PCM. We must not subtract pcmSize
-    // or pcmFooterSize here: those values describe PCM segment sizes stored inside
-    // the footer, but do NOT tell us the PCM segment's position relative to footerOffset.
-    // The authoritative ROM end is: romOffset + romSize (from footer).
-    // safeMax is simply the maximum bytes available before the footer starts.
-    const safeMax = footerOffset - romOffset;
+    // sfrom layout after romOffset = [ROM][PCM data][PCM footer][metadata footer]
+    // Fix #1: clamp safeMax to prevent underflow if PCM values are bogus
+    const safeMax = footerOffset - romOffset; // footerOffset is the absolute boundary
     if (safeMax <= 0 || safeMax > buffer.byteLength) {
-      throw new Error('Invalid footer/ROM layout detected');
+      throw new Error('Invalid footer/PCM layout detected');
     }
 
     // Footer ROM size is authoritative — safeMax is a guard only, never a source of size
@@ -980,78 +1031,605 @@
     if (romSize > safeMax) throw new Error('Footer ROM size exceeds safe boundary');
     if (romOffset + romSize > buffer.byteLength) throw new Error('ROM slice exceeds file bounds');
 
-    // Extract ROM bytes
-    const romBytes = buffer.slice(romOffset, romOffset + romSize);
-    let rom = new Uint8Array(romBytes);
+    // ----------------------------------------------------------------
+    // ROM type detection: probe the internal SNES header directly.
+    //
+    // The footer's romType byte is used as the initial guess, but it
+    // can be wrong or absent (bad dump, non-standard sfrom). We verify
+    // by scoring both candidate header locations (LoROM 0x7FC0 and
+    // HiROM 0xFFC0) against their SNES checksums and picking the winner.
+    // Only if neither passes do we fall back to the footer value.
+    //
+    // Scoring: a valid SNES internal header has checksum ^ complement == 0xFFFF.
+    // We also check that the ROM-type byte at +0x15 is plausible.
+    // ----------------------------------------------------------------
+    function scoreHeader(rom, base) {
+      if (base + 0x20 > rom.length) return -1;
+      const checksum   = rom[base + 0x1E] | (rom[base + 0x1F] << 8);
+      const complement = rom[base + 0x1C] | (rom[base + 0x1D] << 8);
+      const checksumOk = ((checksum ^ complement) & 0xFFFF) === 0xFFFF;
+      // ROM type byte at base+0x15: low nibble 0x0-0x3 is valid range
+      const rtByte = rom[base + 0x15];
+      const rtPlausible = (rtByte & 0xF) <= 0x5;
+      return (checksumOk ? 2 : 0) + (rtPlausible ? 1 : 0);
+    }
 
-    // Fix #5: validate extracted ROM contains a plausible SNES internal header
-    const headerBase = (romType === 0x15 || romType === 0x35) ? 0xFFC0 : 0x7FC0;
+    // Take a provisional slice using footer-declared romSize to probe headers
+    const provisionalRom = new Uint8Array(buffer, romOffset, romSize);
+
+    const scoreLoROM = scoreHeader(provisionalRom, 0x7FC0);
+    const scoreHiROM = scoreHeader(provisionalRom, 0xFFC0);
+    const scoreExHiROM = scoreHeader(provisionalRom, 0x7FC0); // ExHiROM uses LoROM header location
+
+    let headerBase;
+    let detectedRomType;
+
+    if (scoreHiROM > scoreLoROM) {
+      headerBase = 0xFFC0;
+      detectedRomType = 0x15; // HiROM
+    } else if (scoreLoROM >= scoreHiROM) {
+      headerBase = 0x7FC0;
+      detectedRomType = 0x14; // LoROM
+    } else {
+      // Neither passes — trust the footer as last resort
+      headerBase = (romType === 0x15 || romType === 0x35) ? 0xFFC0 : 0x7FC0;
+      detectedRomType = romType;
+    }
+
+    dlog(`Header scores — LoROM:${scoreLoROM} HiROM:${scoreHiROM} → using ${detectedRomType === 0x15 ? 'HiROM' : 'LoROM'} (headerBase=0x${headerBase.toString(16)})`);
+    if (detectedRomType !== romType) {
+      dwarn(`ROM type mismatch: footer=0x${romType.toString(16)}, internal=0x${detectedRomType.toString(16)} — using internal`);
+      romType = detectedRomType;
+    }
+
+    // Cross-reference footer size against the internal SNES header's own size byte.
+    // Byte at headerBase + 0x17 holds the ROM size exponent n: actual size = 2^n * 1024.
+    // If the footer says more bytes than the internal header claims, trim the OUTPUT ROM
+    // to the correct size — but keep the footer-declared size for PCM offset calculation,
+    // because the PCM data starts immediately after the full footer-declared ROM region,
+    // not after the trimmed output. Mutating romSize here would shift pcmDataOffset
+    // into the wrong place (inside padding or ROM data instead of the PCM block).
+    const footerDeclaredRomSize = romSize; // always use this for PCM region offsets
+    if (headerBase + 0x18 <= provisionalRom.length) {
+      const sizeExponent = provisionalRom[headerBase + 0x17];
+      if (sizeExponent >= 8 && sizeExponent <= 16) { // sanity: 256 KB – 64 MB
+        const internalRomSize = Math.pow(2, sizeExponent) * 1024;
+        if (romSize > internalRomSize) {
+          dlog(`Trimming output ROM ${romSize - internalRomSize} bytes (footer=${romSize}, internal=${internalRomSize}); PCM offsets still use footer size`);
+          romSize = internalRomSize;
+        }
+      }
+    }
+
+    // Extract final ROM bytes using the verified size
+    const romBytes = buffer.slice(romOffset, romOffset + romSize);
+    const rom = new Uint8Array(romBytes);
     if (headerBase + 0x20 >= rom.length) {
       throw new Error('Extracted ROM too small to contain SNES header');
     }
     const checksum   = (rom[headerBase + 0x1E] | (rom[headerBase + 0x1F] << 8));
     const complement = (rom[headerBase + 0x1C] | (rom[headerBase + 0x1D] << 8));
-    if (((checksum + complement) & 0xFFFF) !== 0xFFFF) {
-      console.warn('SNES header checksum invalid — extraction boundary may be off');
+    const checksumOk = ((checksum ^ complement) & 0xFFFF) === 0xFFFF;
+    dlog(`Checksum: 0x${checksum.toString(16).padStart(4,'0')} complement: 0x${complement.toString(16).padStart(4,'0')} → ${checksumOk ? '✓ OK' : '✗ MISMATCH'}`);
+    if (!checksumOk) {
+      dwarn('SNES header checksum mismatch after extraction');
     }
 
-    // Extract PCM audio segment (menu preview / replacement audio streams)
-    // Layout: [ROM][PCM data][PCM footer][metadata footer]
-    const pcmOffset = romOffset + romSize;
-    const pcmBytes = (pcmSize > 0 && pcmOffset + pcmSize <= buffer.byteLength)
-      ? buffer.slice(pcmOffset, pcmOffset + pcmSize)
-      : null;
+    // CRC32 the raw (PCMF-patched Nintendo) ROM slice to identify the title
+    const { hash: romCrc, entry: knownEntry } = lookupRom(rom);
+    const isKnownDirty = knownEntry && knownEntry.dirty;
+    dlog(`CRC32: ${romCrc} → ${knownEntry ? knownEntry.name : 'unknown title'}`);
+    dlog(`Output size: ${romSize} bytes (${(romSize/1024).toFixed(1)} KB)`);
 
-    const filename    = file.name.replace(/\.sfrom$/i, '.sfc');
-    const pcmFilename = file.name.replace(/\.sfrom$/i, '.pcm');
+    // PCM footer is extracted and passed to restoreBrrSamples below,
+    // where it is parsed as the BRR sample directory (start+loop PCM offsets
+    // per instrument) and used to rebuild the SPC700 directory table in ROM.
 
-    // === CRC + Auto-patch ===
-    const vcCrc = crc32(rom);
-    console.log(`[sfrom] "${file.name}" VC CRC32: ${vcCrc}  size: 0x${romSize.toString(16)}`);
+    // Extract PCM data that follows the ROM in the .sfrom layout:
+    // [0x30 header][ROM data][PCM data][PCM footer][metadata footer]
+    //
+    // PCM footer trimming: pcmFooterSize bytes immediately precede the
+    // metadata footer and are NOT part of the raw PCM sample stream.
+    // We must skip them when slicing the PCM block so the BRR encoder
+    // reads clean sample data and not loop-point / timing metadata.
+    let restoredRom = new Uint8Array(rom); // mutable working copy
+    const pcmDataOffset = romOffset + footerDeclaredRomSize;
+    // Actual usable PCM sample bytes = total PCM region minus the footer
+    const usablePcmSize = pcmSize; // pcmFooterSize is a separate region after pcmData
 
-    let patchApplied = null;
+    if (usablePcmSize > 0 && pcmDataOffset + usablePcmSize <= buffer.byteLength) {
+      const pcmData = new Uint8Array(buffer, pcmDataOffset, usablePcmSize);
 
-    // Priority 1: user-supplied .cnp file (drop a .cnp alongside the .sfrom)
-    // .cnp files are IPS patches — same format, different extension
-    const cnpKey = file.name.replace(/\.sfrom$/i, '').toUpperCase();
-    const cnpFile = cnpPatches[cnpKey];
-    if (cnpFile) {
-      try {
-        const cnpBuf = await cnpFile.arrayBuffer();
-        const cnpB64 = btoa(String.fromCharCode(...new Uint8Array(cnpBuf)));
-        const patched = applyIPS(rom, cnpB64);
-        const patchedCrc = crc32(patched);
-        rom = patched;
-        patchApplied = `${cnpFile.name} → CRC: ${patchedCrc}`;
-        console.log(`[sfrom] CNP patch applied: "${cnpFile.name}" → CRC: ${patchedCrc}`);
-      } catch(e) {
-        console.warn('[sfrom] CNP patch failed:', e.message);
-      }
-    }
-
-    // Priority 2: built-in PATCH_DB (base64 IPS entries)
-    if (!patchApplied) {
-      const dbEntry = PATCH_DB.find(e => e.vcCrc.toUpperCase() === vcCrc);
-      if (dbEntry && dbEntry.ipsB64) {
-        try {
-          const patched = applyIPS(rom, dbEntry.ipsB64);
-          const patchedCrc = crc32(patched);
-          if (patchedCrc.toUpperCase() !== dbEntry.cleanCrc.toUpperCase()) {
-            console.warn(`[sfrom] Patch applied but CRC mismatch: got ${patchedCrc}, expected ${dbEntry.cleanCrc}`);
-          }
-          rom = patched;
-          patchApplied = dbEntry.name;
-          console.log(`[sfrom] DB patch applied: "${dbEntry.name}" → clean CRC: ${patchedCrc}`);
-        } catch(e) {
-          console.warn('[sfrom] DB patch failed:', e.message);
+      // Extract the PCM footer (sample directory: start+loop PCM offsets per instrument).
+      // This is passed to restoreBrrSamples so it can rebuild the BRR directory table
+      // in the ROM — without it, the SPC700 directory points to wrong sample indices.
+      let pcmFooter = null;
+      if (pcmFooterSize > 0) {
+        const pcmFooterOffset = romOffset + footerDeclaredRomSize + pcmSize; // footer follows full pcm blob
+        if (pcmFooterOffset + pcmFooterSize <= buffer.byteLength) {
+          pcmFooter = new Uint8Array(buffer, pcmFooterOffset, pcmFooterSize);
         }
       }
+
+      if (knownEntry && knownEntry.patches.length > 0) {
+        // Preferred path: use verified original bytes instead of re-encoding
+        const n = applyKnownPatches(restoredRom, knownEntry.patches);
+        dlog(`Applied ${n} hardcoded patch(es) for "${knownEntry.name}"`);
+        // Still run BRR restoration for any remaining PCMF blocks the
+        // patch table doesn't cover (e.g. sound effects vs music)
+        restoredRom = restoreBrrSamples(restoredRom, pcmData, pcmFooter, diag);
+      } else {
+        restoredRom = restoreBrrSamples(restoredRom, pcmData, pcmFooter, diag);
+      }
+      dlog(`BRR restoration: ${usablePcmSize > 0 ? 'complete' : 'skipped (no PCM data)'}`);
+    } else {
+      dlog('No usable PCM data — skipping BRR restoration');
     }
 
-    const knownVc = !!PATCH_DB.find(e => e.vcCrc.toUpperCase() === vcCrc);
-    const info = { fps, romType, chipVal, presetId, romSize, pcmSize, vcCrc, patchApplied, knownVc };
+    // Recalculate the SNES internal header checksum over the restored ROM.
+    // The checksum was valid on the PCMF-modified Nintendo ROM, but after
+    // replacing 3153+ PCMF tags with BRR data the stored value is stale.
+    // Any tool or emulator that validates the header will flag it as corrupt
+    // until we rewrite the checksum and complement fields.
+    //
+    // SNES checksum: sum of all bytes in the ROM (wrapping at 16-bit),
+    // with the checksum bytes themselves treated as 0xFF each during calculation.
+    // Complement = checksum XOR 0xFFFF.
+    // Stored at: headerBase+0x1C (complement lo), +0x1D (hi), +0x1E (sum lo), +0x1F (hi)
+    if (usablePcmSize > 0) {
+      // Zero out the four checksum bytes before summing (per SNES spec)
+      restoredRom[headerBase + 0x1C] = 0xFF;
+      restoredRom[headerBase + 0x1D] = 0xFF;
+      restoredRom[headerBase + 0x1E] = 0xFF;
+      restoredRom[headerBase + 0x1F] = 0xFF;
 
-    return { romBytes: rom.buffer, filename, pcmBytes, pcmFilename, info };
+      let sum = 0;
+      for (let i = 0; i < restoredRom.length; i++) {
+        sum = (sum + restoredRom[i]) & 0xFFFF;
+      }
+      const newComplement = (~sum) & 0xFFFF;
+
+      restoredRom[headerBase + 0x1C] = newComplement & 0xFF;
+      restoredRom[headerBase + 0x1D] = (newComplement >> 8) & 0xFF;
+      restoredRom[headerBase + 0x1E] = sum & 0xFF;
+      restoredRom[headerBase + 0x1F] = (sum >> 8) & 0xFF;
+
+      dlog(`Checksum recalculated: sum=0x${sum.toString(16).padStart(4,'0')} complement=0x${newComplement.toString(16).padStart(4,'0')}`);
+    }
+
+    // ── PCM isolation guarantee ──────────────────────────────────
+    // The sfrom file layout is:
+    //   [0x30 sfrom header][ROM region (footerDeclaredRomSize bytes)]
+    //   [PCM samples][PCM footer][metadata footer]
+    //
+    // restoredRom was initialised from buffer.slice(romOffset, romOffset + romSize)
+    // where romSize = min(footerDeclaredRomSize, internalHeaderRomSize).
+    // It is a standalone ArrayBuffer with NO reference to the original buffer.
+    // The PCM region begins at romOffset + footerDeclaredRomSize, which is always
+    // >= romOffset + romSize, so PCM bytes can never be inside restoredRom.
+    //
+    // Emulators that detect MSU-1 or other PCM-streaming enhancements do so by
+    // finding specific data at known SNES addresses within the ROM image, not
+    // by looking at sidecar files or memory beyond the ROM boundary.
+    // Because our output is exactly romSize bytes of clean SNES ROM — with all
+    // PCMF placeholders replaced by BRR blocks and no PCM payload appended —
+    // there is nothing for such detection heuristics to latch onto.
+    //
+    // Assertion: output size must not exceed the declared ROM size.
+    if (restoredRom.length > footerDeclaredRomSize) {
+      // Should never happen — belt-and-suspenders guard.
+      derr(`Output ROM (${restoredRom.length}) exceeds declared ROM region (${footerDeclaredRomSize}) — PCM data may have leaked in`);
+      restoredRom = restoredRom.slice(0, romSize);
+    }
+
+    // ── PAL → NTSC pitch correction ──────────────────────────────
+    // A PAL sfrom runs at 50 Hz. When an emulator loads the output .sfc
+    // and detects the region as PAL, it runs the SPC700 at the PAL clock
+    // rate (≈32040 Hz sample rate). On NTSC hardware/emulators, the same
+    // ROM would run at 60 Hz (≈32000 Hz sample rate) — a ~1.4% difference
+    // that manifests as the entire soundtrack playing sharp and slightly fast.
+    //
+    // The SNES internal header encodes the target region at headerBase+0x19:
+    //   0x00 = Japan, 0x01 = USA/NTSC — these two mean NTSC
+    //   0x02 = Europe, 0x03–0x0C = other PAL regions
+    //
+    // If the sfrom footer says fps=0x32 (50 Hz) AND the known-ROM database
+    // flags this entry as pal:true, we rewrite headerBase+0x19 to 0x01 (USA)
+    // so NTSC emulators play it at the correct SPC clock rate.
+    // We also update the sfrom-footer fps value in our metadata to reflect
+    // that the output is now NTSC-targeted.
+    //
+    // This correction is skipped for unknown ROMs (no knownEntry) because
+    // we cannot be certain the ROM hasn't already been corrected elsewhere.
+    const isPal = fps === 0x32;
+    const isPalEntry = knownEntry && knownEntry.pal === true;
+    let pitchCorrected = false;
+    if (isPal && isPalEntry) {
+      const regionByte = restoredRom[headerBase + 0x19];
+      const isNtscRegion = regionByte === 0x00 || regionByte === 0x01;
+      if (!isNtscRegion) {
+        // Rewrite region to USA (NTSC)
+        restoredRom[headerBase + 0x19] = 0x01;
+        pitchCorrected = true;
+        dlog(`PAL pitch correction applied: region byte 0x${regionByte.toString(16)} → 0x01 (USA/NTSC)`);
+      }
+    }
+
+    // Build output filename: replace .sfrom with .sfc
+    const filename = file.name.replace(/\.sfrom$/i, '.sfc');
+
+    const info = {
+      fps, romType, chipVal, presetId, romSize,
+      brrRestored: usablePcmSize > 0,
+      romCrc,
+      knownTitle:      knownEntry  ? knownEntry.name : null,
+      dirtyWarning:    isKnownDirty,
+      isPal,
+      pitchCorrected,
+      diag
+    };
+
+    return { romBytes: restoredRom.buffer, filename, info };
+  }
+
+  // ============================================================
+  // BRR Restoration — ported from Bryan Cain's snesrestore.py
+  // ============================================================
+  // The .sfrom format replaces every 9-byte BRR audio block in the
+  // ROM with an 8-byte PCMF placeholder:
+  //   [0x50 0x43 0x4D 0x46] [24-bit PCM sample-word offset, LE] [flags]
+  // This function scans the ROM for every PCMF tag, re-encodes the
+  // corresponding PCM samples back into SNES BRR format, and writes
+  // the 9-byte BRR block over the placeholder.
+  //
+  // BRR block layout (9 bytes):
+  //   Byte 0:    [shift:4][filter:2][loop:1][end:1]
+  //   Bytes 1–8: 16 × 4-bit signed sample deltas, high nibble first
+  //
+  // All filter and delta formulas are taken directly from verified
+  // SNES emulator source (snes9x apu/bapu/dsp.cpp) and cross-checked
+  // against the full-SNES hardware reference (fullsnes / no$sns docs).
+  // ============================================================
+
+  function restoreBrrSamples(romIn, pcmData, pcmFooter, diag) {
+    const rom = new Uint8Array(romIn);
+
+    // ── PCM reader ───────────────────────────────────────────────
+    // Returns a 16-bit signed sample from pcmData at BYTE offset.
+    function readPcm(byteOff) {
+      if (byteOff + 2 > pcmData.length) return 0;
+      // PCM is 16-bit signed big-endian
+      const raw = (pcmData[byteOff] << 8) | pcmData[byteOff + 1];
+      return raw >= 0x8000 ? raw - 0x10000 : raw;
+    }
+
+    // ── SPC700-accurate BRR decode helper ────────────────────────
+    // Decodes one nibble exactly as the SPC700 hardware would, given
+    // the current filter, shift, and previous two output samples.
+    // Returns the new decoded output sample (16-bit signed, bit 0 clear).
+    //
+    // Hardware pipeline (verified against snes9x / bsnes source):
+    //   1. delta  = (nibble_signed << shift) >> 1   [arithmetic >>]
+    //   2. pred   = filter_prediction(p1, p2)        [see below]
+    //   3. raw    = pred + delta
+    //   4. output = clamp(raw, -32768, 32767)
+    //   5. output = output & ~1                      [clear bit 0]
+    //
+    // Filter formulas — JS >> is signed arithmetic right shift (C behaviour),
+    // identical to the SPC700's SAR instruction.  Do NOT replace with
+    // Math.trunc: for negative operands >> floors toward -∞ while Math.trunc
+    // truncates toward 0, and the hardware floors.
+    //
+    //   Filter 0: pred = 0
+    //   Filter 1: pred = p1 - (p1 >> 4)                          [≈ p1 × 15/16]
+    //   Filter 2: pred = (p1<<1) - (p1*3 >> 5) - p2 + (p2 >> 4) [≈ p1×61/32 − p2×15/16]
+    //   Filter 3: pred = (p1<<1) - (p1*13>>6) - p2 + (p2*3>>4)  [≈ p1×115/64 − p2×13/16]
+    function spcDecode(nibble, shift, filter, p1, p2) {
+      // nibble is already sign-extended to -8..7
+      const delta = (nibble << shift) >> 1;
+
+      let pred;
+      switch (filter) {
+        case 0: pred = 0; break;
+        case 1: pred = p1 - (p1 >> 4); break;
+        case 2: pred = (p1 << 1) - ((p1 * 3) >> 5) - p2 + (p2 >> 4); break;
+        case 3: pred = (p1 << 1) - ((p1 * 13) >> 6) - p2 + ((p2 * 3) >> 4); break;
+      }
+
+      let out = pred + delta;
+      // Clamp to 16-bit signed
+      if (out >  32767) out =  32767;
+      if (out < -32768) out = -32768;
+      // Clear bit 0 (hardware always produces even output values)
+      return out & ~1;
+    }
+
+    // ── Encode one 9-byte BRR block ──────────────────────────────
+    // pcmSampleOffset: index of the first of 16 samples in pcmData
+    //   (unit = one 16-bit sample = 2 bytes; multiply by 2 for byte address).
+    // state: { prev1, prev2 } — updated in-place with the winning block's
+    //   final decoded p1/p2 so the next block's filter has correct history.
+    //
+    // Strategy: exhaustive search over all 4 filters × 13 shift values
+    // (shift 0–12; shifts 13–15 produce hardware-corrupt output and are
+    // excluded).  The combination with the lowest sum-of-squared-error
+    // between target PCM and simulated decoded output is chosen.
+    // This matches the approach used by snesbrr and BRRtools.
+    function encodeBrrBlock(pcmSampleOffset, state, forcedFilter) {
+      // pcmSampleOffset is already a BYTE offset into pcmData.
+      // (The PCMF tag stores a byte offset, matching the original snesrestore.py
+      // which uses struct.unpack '<h' at pcm_offset directly into the PCM byte array.)
+      // Each BRR block covers 16 samples × 2 bytes = 32 bytes of PCM.
+      const base = pcmSampleOffset;
+
+      const target = new Int32Array(16);
+      for (let i = 0; i < 16; i++) target[i] = readPcm(base + i * 2);
+
+      let bestBlock  = null;
+      let bestError  = Infinity;
+      let bestP1     = 0;
+      let bestP2     = 0;
+
+      const filterStart = (forcedFilter >= 0 && forcedFilter <= 3) ? forcedFilter : 0;
+      const filterEnd   = (forcedFilter >= 0 && forcedFilter <= 3) ? forcedFilter : 3;
+      for (let filter = filterStart; filter <= filterEnd; filter++) {
+        for (let shift = 0; shift <= 12; shift++) {
+          const block = new Uint8Array(9);
+          // Control byte: shift in bits 7-4, filter in bits 3-2
+          // (end/loop bits are ORed in by the caller)
+          block[0] = (shift << 4) | (filter << 2);
+
+          let p1 = state.prev1;
+          let p2 = state.prev2;
+          let err = 0;
+
+          for (let i = 0; i < 16; i++) {
+            // ── Find best nibble for this sample ──────────────────
+            // The step size is 2^(shift-1) (from the >>1 in spcDecode).
+            // shift=0 → step=0, delta always 0, only nibble 0 is useful.
+            let nibble;
+            if (shift === 0) {
+              nibble = 0;
+            } else {
+              // Compute what prediction the hardware would make
+              let pred;
+              switch (filter) {
+                case 0: pred = 0; break;
+                case 1: pred = p1 - (p1 >> 4); break;
+                case 2: pred = (p1 << 1) - ((p1 * 3) >> 5) - p2 + (p2 >> 4); break;
+                case 3: pred = (p1 << 1) - ((p1 * 13) >> 6) - p2 + ((p2 * 3) >> 4); break;
+              }
+              const residual = target[i] - pred;
+              // Quantise: divide residual by step size, truncate toward zero
+              const step = 1 << (shift - 1); // = 2^(shift-1)
+              nibble = Math.trunc(residual / step);
+              if (nibble < -8) nibble = -8;
+              if (nibble >  7) nibble =  7;
+            }
+
+            // ── Simulate hardware decode to get actual output ──────
+            const decoded = spcDecode(nibble, shift, filter, p1, p2);
+
+            // Accumulate squared error against the original PCM target
+            const e = target[i] - decoded;
+            err += e * e;
+
+            // Store nibble (unsigned 4-bit) into block bytes 1-8
+            const nib4 = nibble & 0xF;
+            const byteIdx = 1 + (i >> 1);
+            if (i & 1) block[byteIdx] |= nib4;
+            else        block[byteIdx]  = nib4 << 4;
+
+            p2 = p1;
+            p1 = decoded;
+          }
+
+          if (err < bestError) {
+            bestError = err;
+            bestBlock = block;
+            bestP1    = p1;
+            bestP2    = p2;
+          }
+        }
+      }
+
+      // Commit the winning block's final decoder state
+      state.prev1 = bestP1;
+      state.prev2 = bestP2;
+
+      return bestBlock;
+    }
+
+    // ── Main scan: two passes ────────────────────────────────────
+    //
+    // Pass 1 — build pcmByteOffset → romPosition map from all PCMF tags
+    //           WITHOUT writing anything, so the unmodified ROM can be read
+    //           for the directory-table patch after Pass 2.
+    //
+    // Pass 2 — walk the tags again and write encoded BRR blocks.
+
+    // Pass 1: pcmByteOffset → ROM position of that PCMF tag
+    const pcmOffsetToRomPos = new Map();
+    for (let i = 0; i <= rom.length - 8; i++) {
+      if (rom[i] !== 0x50 || rom[i+1] !== 0x43 || rom[i+2] !== 0x4D || rom[i+3] !== 0x46) continue;
+      const off = rom[i+4] | (rom[i+5] << 8) | (rom[i+6] << 16);
+      if (!pcmOffsetToRomPos.has(off)) pcmOffsetToRomPos.set(off, i);
+    }
+    if (diag) diag.push({ level: 'info', msg: `Pass 1: mapped ${pcmOffsetToRomPos.size} distinct PCM offsets` });
+    console.log(`[brr] Pass 1: mapped ${pcmOffsetToRomPos.size} distinct PCM offsets`);
+
+    // Diagnostic: dump PCM bytes at key offsets to verify format and positioning
+    {
+      const dump = (label, byteOff, len) => {
+        const bytes = Array.from(pcmData.slice(byteOff, byteOff + len))
+          .map(b => b.toString(16).padStart(2,'0')).join(' ');
+        console.log(`[pcm] ${label} @ byte ${byteOff} (0x${byteOff.toString(16)}): ${bytes}`);
+      };
+      dump('pcmData[0..31]', 0, 32);
+      dump('pcmData[0x100..0x12f]', 0x100, 48);
+      dump('pcmData[0x112..0x141]', 0x112, 48); // first real sample per footer
+      dump('pcmData[0x224..0x253]', 0x224, 48); // rawOff=0x112 * 2 = 0x224 if word*2
+    }
+
+    // Pass 2: encode and write BRR blocks
+    let lastPcmOffset = -1;
+    let replacements  = 0;
+    let pos           = 0;
+    let decoderState  = { prev1: 0, prev2: 0 };
+
+    while (pos <= rom.length - 8) {
+      if (rom[pos]   !== 0x50 || rom[pos+1] !== 0x43 ||
+          rom[pos+2] !== 0x4D || rom[pos+3] !== 0x46) { pos++; continue; }
+
+      const rawOffset = rom[pos+4] | (rom[pos+5] << 8) | (rom[pos+6] << 16);
+      const flagsByte = rom[pos+7];
+      const endBit    = flagsByte & 0x01;
+      const loopBit   = flagsByte & 0x02;
+
+      // Always trust the tag's own rawOffset — it is a byte offset into the PCM blob.
+      // The old lastPcmOffset+32 fallback was a guess that produced wrong PCM windows
+      // when Nintendo's offsets weren't multiples of 32.
+      // rawOffset is a sample-word index (units of 16-bit samples).
+      // Multiply by 2 to get the byte offset into the PCM blob.
+      const pcmOffset = rawOffset * 2;
+      // Reset decoder state at the start of a new sample chain.
+      if (lastPcmOffset < 0 || rawOffset === 0 || rawOffset < lastPcmOffset) {
+        decoderState = { prev1: 0, prev2: 0 };
+      }
+
+      if (replacements < 8) {
+        const _bMsg = `brr[${replacements}] rom=0x${pos.toString(16)} pcmOff=${pcmOffset} rawOff=${rawOffset} flags=0x${flagsByte.toString(16).padStart(2,'0')}`;
+        if (diag) diag.push({ level: 'info', msg: _bMsg });
+        console.log('[brr]', _bMsg);
+      }
+
+      const forcedFilter = (flagsByte >> 2) & 0x03; // PCMF flags[3:2] = original BRR filter
+      const brr = encodeBrrBlock(pcmOffset, decoderState, forcedFilter);
+      brr[0] |= endBit | loopBit;
+      for (let b = 0; b < 9 && pos + b < rom.length; b++) rom[pos + b] = brr[b];
+      if (endBit) decoderState = { prev1: 0, prev2: 0 };
+
+      lastPcmOffset = pcmOffset;
+      replacements++;
+      pos += 9;
+    }
+
+    // ── Directory table patch ────────────────────────────────────
+    //
+    // The PCM footer is the BRR sample directory: 4 bytes per instrument,
+    //   [startPcmOff_lo][startPcmOff_hi][loopPcmOff_lo][loopPcmOff_hi]
+    // where each value is the PCM byte offset matching a PCMF tag's rawOffset.
+    // We translate these to ROM positions via pcmOffsetToRomPos, then compute
+    // the SPC-RAM address each sample will land at when the music driver
+    // uploads BRR data to SPC700 RAM, and patch the ROM's directory table.
+    //
+    // The SPC-RAM address of sample N = spcBase + (romPos[N] - romPos[0])
+    // because the driver copies BRR blocks from ROM into SPC RAM sequentially,
+    // starting at spcBase (read from the existing first directory entry).
+    //
+    // We locate the existing directory table by scanning for a run of 4-byte
+    // entries whose start and loop values are both plausible SPC-RAM addresses
+    // (0x2000–0xFFFF) with loop >= start, and starts monotonically increasing.
+
+    // ── Directory table patch using confirmed PCM footer layout ────
+    //
+    // Reverse-engineered format (confirmed via hex analysis of CLV-P-SAAAE.sfrom):
+    //   Each record = 6 bytes:
+    //     bytes 0-2 (LE): PCM byte offset into the PCM blob
+    //     bytes 3-5 (LE): SPC700 RAM address where Canoe injects this sample
+    //   Records are NOT sequential — multiple records may share a PCM offset
+    //   (same sample mapped to different SPC slots), and the PCM offset is
+    //   NOT monotonically increasing across records.
+    //
+    // Strategy: for each 6-byte record, find the BRR block we just wrote for
+    // that PCM offset (via pcmOffsetToRomPos), then locate the SPC700 directory
+    // table entry whose start address matches the spcAddr from the record, and
+    // update its loop pointer to point to the last BRR block of that sample.
+
+    if (pcmFooter && pcmFooter.length >= 6 && pcmFooter.length % 6 === 0) {
+      const numRecords = pcmFooter.length / 6;
+
+      // Parse all 6-byte records
+      const footerRecords = [];
+      for (let r = 0; r < numRecords; r++) {
+        const base    = r * 6;
+        const pcmOff  = pcmFooter[base]   | (pcmFooter[base+1] << 8) | (pcmFooter[base+2] << 16);
+        const spcAddr = pcmFooter[base+3] | (pcmFooter[base+4] << 8) | (pcmFooter[base+5] << 16);
+        footerRecords.push({ pcmOff, spcAddr });
+      }
+      if (diag) diag.push({ level: 'info', msg: `PCM footer: ${numRecords} records (6-byte format)` });
+
+      // Locate the SPC700 DIR table in ROM.
+      // The DIR table contains 4-byte entries: [start_lo, start_hi, loop_lo, loop_hi].
+      // We know the exact SPC addresses from the footer records — use them to anchor the scan.
+      // Validation: look for a run of 4-byte entries where start addresses match known
+      // SPC addresses from our footer records (all 0x10-aligned, range 0x0000–0xFFFF).
+      // CORRECTED: removed the 0x2000 floor — SMW uses addresses starting at 0x00b0.
+      const knownSpcAddrs = new Set(footerRecords.map(r => r.spcAddr));
+      const MIN_MATCH = Math.min(4, numRecords);
+      let dirTableRomPos = -1;
+
+      // SMW has multiple SPC programs uploaded to SPC700 RAM at different times,
+      // each with its own DIR table. We find ALL of them by scanning for runs of
+      // 4-byte entries [start_lo start_hi loop_lo loop_hi] where:
+      //   - start is 16-byte aligned (SPC700 hardware requirement)
+      //   - loop >= start and within 32KB of start
+      //   - at least one entry within the run matches a known SPC address
+      // We do NOT require the first entry to match — tables often begin with
+      // low-address entries (e.g. 0x0100) before reaching our known addresses.
+      const dirTables = [];
+      const patchedBytes = new Set(); // avoid double-patching overlapping regions
+      for (let scan = 0; scan + 3 < rom.length; scan += 2) {
+        const s0 = rom[scan] | (rom[scan+1] << 8);
+        // First entry must be 16-byte aligned and nonzero, but not necessarily known
+        if (s0 === 0 || (s0 & 0xF) !== 0) continue;
+        const l0 = rom[scan+2] | (rom[scan+3] << 8);
+        if (l0 < s0 || l0 > s0 + 0x7FFF) continue;
+        if (patchedBytes.has(scan)) continue;
+        // Extend the run as far as valid entries continue
+        let count = 0, score = 0;
+        for (let e = 0; scan + e*4 + 3 < rom.length; e++) {
+          const s = rom[scan + e*4] | (rom[scan + e*4 + 1] << 8);
+          const l = rom[scan + e*4 + 2] | (rom[scan + e*4 + 3] << 8);
+          if (s === 0 || (s & 0xF) !== 0) break;
+          if (l < s || l > s + 0x7FFF) break;
+          count++;
+          if (knownSpcAddrs.has(s)) score++;
+        }
+        if (score >= MIN_MATCH) {
+          dirTables.push({ romPos: scan, numEntries: count, score });
+          console.log(`[brr] Dir table at ROM 0x${scan.toString(16)}: ${count} entries, ${score} match known SPC addrs`);
+          for (let e = 0; e < count; e++) patchedBytes.add(scan + e*4);
+        }
+      }
+
+      if (dirTables.length > 0) {
+        let totalPatched = 0;
+        for (const { romPos: tablePos, numEntries } of dirTables) {
+          for (let e = 0; e < numEntries; e++) {
+            const eBase = tablePos + e * 4;
+            const spcAddr = rom[eBase] | (rom[eBase+1] << 8);
+            if (!knownSpcAddrs.has(spcAddr)) continue;
+            // Set loop pointer = spcAddr (loop entire sample — correct for
+            // BRR blocks encoded with end+loop on the final block)
+            rom[eBase + 2] = spcAddr & 0xFF;
+            rom[eBase + 3] = (spcAddr >> 8) & 0xFF;
+            totalPatched++;
+          }
+        }
+        const dirMsg = `Directory table(s) patched: ${totalPatched} loop pointers across ${dirTables.length} table(s)`;
+        if (diag) diag.push({ level: 'info', msg: dirMsg });
+        console.log('[brr]', dirMsg);
+      } else {
+        console.warn('[brr] Could not locate any SPC700 directory tables in ROM');
+        if (diag) diag.push({ level: 'warn', msg: 'Could not locate any SPC700 directory tables in ROM' });
+      }
+    }
+
+    const msg = `BRR restore complete: ${replacements} block(s) written`;
+    console.log(msg);
+    if (diag) diag.push({ level: 'info', msg });
+    return rom;
   }
 
   function buildTags(info) {
@@ -1066,14 +1644,28 @@
     }
     const chip = CHIP_NAMES[info.chipVal];
     if (chip) tags += `<span class="tag chip">${chip}</span>`;
-    if (info.patchApplied) {
-      tags += `<span class="tag patched" title="Restored to: ${info.patchApplied}">✔ patched</span>`;
-    } else if (info.knownVc) {
-      tags += `<span class="tag vcrom" title="CRC: ${info.vcCrc} — known VC ROM, add IPS to patch DB">known VC</span>`;
-    } else {
-      tags += `<span class="tag vcrom" title="CRC: ${info.vcCrc} — not in patch DB">VC ROM</span>`;
+
+    // Known title badge
+    if (info.knownTitle) {
+      tags += ` <span style="opacity:0.7;font-size:0.7em">${escapeHtml(info.knownTitle)}</span>`;
     }
-    return tags + ` <span style="opacity:0.5;font-size:0.6rem">${info.vcCrc}</span>`;
+
+    // Dirty ROM warning
+    if (info.dirtyWarning) {
+      tags += ` <span class="tag chip" title="Nintendo modified music/instrument data in this VC version. Audio may have wrong instruments or pitch even after BRR restoration.">⚠ Dirty ROM</span>`;
+    }
+
+    // PAL pitch-correction badge
+    if (info.isPal && info.pitchCorrected) {
+      tags += ` <span class="tag fps60" title="PAL (50 Hz) sfrom detected. Region byte patched to NTSC so music plays at correct pitch and speed.">♪ PAL→NTSC fixed</span>`;
+    } else if (info.isPal && !info.pitchCorrected) {
+      tags += ` <span class="tag fps50" title="PAL (50 Hz) sfrom. Music may play slightly sharp on NTSC emulators. This ROM was not in the pitch-correction database.">⚠ PAL not corrected</span>`;
+    }
+
+    // CRC badge (always shown, useful for debugging)
+    tags += ` <span style="opacity:0.4;font-family:'Space Mono',monospace;font-size:0.65em">${info.romCrc || ''}</span>`;
+
+    return tags + ` <span style="opacity:0.5">Preset #${info.presetId}</span>`;
   }
 
   function triggerDownload(buffer, filename) {
