@@ -1464,10 +1464,10 @@
     let pos           = 0;
     let decoderState  = { prev1: 0, prev2: 0 };
     let _sampleChain    = 0;
-    let _resetNextBlock = true; // reset state before first block
-    let _chainStartRom  = -1;   // ROM position of first block in current chain
-    let _isFirstBlock   = true; // true for the very first block of each new chain
-    let _expectedRawOff = -1;   // expected rawOffset for the next sequential block in chain
+    let _resetNextBlock = true;
+    let _chainStartRom  = -1;
+    let _isFirstBlock   = true;
+    let _expectedRawOff = -1; // expected rawOffset for next sequential block in chain
     const _loopBlockMap = new Map(); // chainStartRomPos → loopBlockRomPos
 
     while (pos <= rom.length - 8) {
@@ -1490,21 +1490,16 @@
 
       const forcedFilter = (flagsByte >> 2) & 0x03; // PCMF flags[3:2] = original BRR filter
 
-      // Track chain start and loop point.
-      // _isFirstBlock gates: after end bit is processed we set it true, so
-      // _chainStartRom is correctly updated at the first block of every new chain.
-      // Loop point detection: within a chain, each block's rawOffset should be
-      // exactly previousRawOffset + 16 (sequential 16-sample steps).
-      // A non-sequential rawOffset mid-chain means this block IS the loop point —
-      // it jumps back to wherever the loop starts in the PCM data.
-      // (The old rawOffset===0 check only detected samples that loop from offset 0.)
+      // Chain start: _isFirstBlock is set true after each end block.
+      // Loop point: consecutive blocks in a chain have rawOffset increasing by exactly 16
+      // (16 samples per block). A mid-chain block where rawOffset != expectedNext means
+      // the PCM data jumps back to the loop start — that block IS the loop point.
       if (_isFirstBlock) {
         _chainStartRom  = pos;
         _isFirstBlock   = false;
-        _expectedRawOff = rawOffset + 16; // next block should be +16 sample-words
+        _expectedRawOff = rawOffset + 16;
       } else {
         if (rawOffset !== _expectedRawOff && _chainStartRom >= 0) {
-          // Non-sequential: this block is the loop point for this chain
           if (!_loopBlockMap.has(_chainStartRom)) {
             _loopBlockMap.set(_chainStartRom, pos);
           }
@@ -1519,14 +1514,10 @@
       }
       if (endBit && _sampleChain < 3) { _sampleChain++; console.log('[brr] --- end of sample chain ' + _sampleChain + ' ---'); }
       const brr = encodeBrrBlock(pcmOffset, decoderState, forcedFilter);
-      // PCMF bit 0 = BRR end flag. PCMF bit 1 is NOT the BRR loop flag —
-      // it is set on every block and means "carry decoder state".
-      // Only set BRR loop=1 on end blocks for samples that actually have a loop point.
-      // One-shot samples must use end=1 + loop=0; forcing loop=1 makes the SPC700
-      // replay them indefinitely, corrupting the voice and drowning out other channels.
+      // Set end bit always when endBit; set loop bit only for samples that have
+      // a loop point — one-shot SFX must NOT have loop=1.
       if (endBit) {
-        const isLooping = _loopBlockMap.has(_chainStartRom);
-        brr[0] |= isLooping ? 0x03 : 0x01;
+        brr[0] |= _loopBlockMap.has(_chainStartRom) ? 0x03 : 0x01;
       }
       for (let b = 0; b < 9 && pos + b < rom.length; b++) rom[pos + b] = brr[b];
       if (endBit) {
@@ -1539,117 +1530,7 @@
       pos += 9;
     }
 
-    // ── Directory table patch ────────────────────────────────────
-    //
-    // The PCM footer is the BRR sample directory: 4 bytes per instrument,
-    //   [startPcmOff_lo][startPcmOff_hi][loopPcmOff_lo][loopPcmOff_hi]
-    // where each value is the PCM byte offset matching a PCMF tag's rawOffset.
-    // We translate these to ROM positions via pcmOffsetToRomPos, then compute
-    // the SPC-RAM address each sample will land at when the music driver
-    // uploads BRR data to SPC700 RAM, and patch the ROM's directory table.
-    //
-    // The SPC-RAM address of sample N = spcBase + (romPos[N] - romPos[0])
-    // because the driver copies BRR blocks from ROM into SPC RAM sequentially,
-    // starting at spcBase (read from the existing first directory entry).
-    //
-    // We locate the existing directory table by scanning for a run of 4-byte
-    // entries whose start and loop values are both plausible SPC-RAM addresses
-    // (0x2000–0xFFFF) with loop >= start, and starts monotonically increasing.
-
-    // ── Directory table patch using confirmed PCM footer layout ────
-    //
-    // Reverse-engineered format (confirmed via hex analysis of CLV-P-SAAAE.sfrom):
-    //   Each record = 6 bytes:
-    //     bytes 0-2 (LE): PCM byte offset into the PCM blob
-    //     bytes 3-5 (LE): SPC700 RAM address where Canoe injects this sample
-    //   Records are NOT sequential — multiple records may share a PCM offset
-    //   (same sample mapped to different SPC slots), and the PCM offset is
-    //   NOT monotonically increasing across records.
-    //
-    // Strategy: for each 6-byte record, find the BRR block we just wrote for
-    // that PCM offset (via pcmOffsetToRomPos), then locate the SPC700 directory
-    // table entry whose start address matches the spcAddr from the record, and
-    // update its loop pointer to point to the last BRR block of that sample.
-
-    if (pcmFooter && pcmFooter.length >= 6 && pcmFooter.length % 6 === 0) {
-      const numRecords = pcmFooter.length / 6;
-
-      // Parse 6-byte footer records: (pcm_offset word-index, spc_addr)
-      const footerRecords = [];
-      for (let r = 0; r < numRecords; r++) {
-        const base    = r * 6;
-        const pcmOff  = pcmFooter[base]   | (pcmFooter[base+1] << 8) | (pcmFooter[base+2] << 16);
-        const spcAddr = pcmFooter[base+3] | (pcmFooter[base+4] << 8) | (pcmFooter[base+5] << 16);
-        footerRecords.push({ pcmOff, spcAddr });
-      }
-
-      // Build map: rawOff (word index) → ROM position of first block with that rawOff
-      // pcmOffsetToRomPos keys are rawOff values (word indices, same as PCMF rawOffset field)
-      // Footer pcmOff values are byte offsets — divide by 2 to get word index for lookup
-      //
-      // For each sample chain, the footer gives us:
-      //   pcmOff (byte) / 2 = rawOff of the chain's first block → ROM start of chain
-      //   spcAddr = SPC RAM address where the chain starts
-      //
-      // The loop block within a chain has rawOff=0 (mid-chain marker).
-      // Its ROM position is in pcmOffsetToRomPos.get(0) — but rawOff=0 appears in
-      // every chain's loop block. We need the specific instance for each chain.
-      //
-      // Better: during Pass 2 we know each block's ROM position. Build a map of
-      // chainStartRawOff → loopBlockRomPos by tracking which rawOff=0 block
-      // belongs to which chain (identified by the preceding chain start rawOff).
-      // We already collected this in _loopBlockMap built during Pass 2.
-
-      // Build map: rawOff → chainStartRomPos from pcmOffsetToRomPos
-      // pcmOffsetToRomPos keys are rawOff word indices (same as PCMF rawOffset field)
-      // Footer pcmOff values are BYTE offsets → divide by 2 to get rawOff word index
-
-      // Build spcAddr → computed loopSpcAddr map for all footer records
-      const spcLoopMap = new Map(); // spcAddr → loopSpcAddr
-      const loggedLoops = [];
-      for (const { pcmOff, spcAddr } of footerRecords) {
-        if (spcLoopMap.has(spcAddr)) continue; // already computed
-        const rawOff = pcmOff / 2;
-        const chainStartRomPos = pcmOffsetToRomPos.get(rawOff);
-        if (chainStartRomPos === undefined) continue;
-        const loopRomPos = _loopBlockMap.get(chainStartRomPos);
-        const loopSpcAddr = loopRomPos !== undefined
-          ? (spcAddr + (loopRomPos - chainStartRomPos)) & 0xFFFF
-          : spcAddr;
-        spcLoopMap.set(spcAddr, loopSpcAddr);
-        loggedLoops.push(`spc=0x${spcAddr.toString(16).padStart(4,'0')} loopRom=${loopRomPos !== undefined ? '0x'+loopRomPos.toString(16) : 'none'} loopSpc=0x${loopSpcAddr.toString(16).padStart(4,'0')}`);
-      }
-      loggedLoops.slice(0,10).forEach(m => console.log('[brr]', m));
-
-      // Build ROM index: (lo<<8|hi) → [positions] with single pass over ROM
-      // Only index positions where bytes match a known spcAddr pair AND
-      // the following 2 bytes look like a valid loop pointer (>= start, within 32KB)
-      const spcIndex = new Map(); // spcAddr → [rom positions of dir entries]
-      for (const spcAddr of spcLoopMap.keys()) {
-        spcIndex.set(spcAddr, []);
-      }
-      for (let i = 0; i + 3 < rom.length; i++) {
-        const s = rom[i] | (rom[i+1] << 8);
-        if (!spcIndex.has(s)) continue;
-        const l = rom[i+2] | (rom[i+3] << 8);
-        if (l >= s && l <= s + 0x7FFF) spcIndex.get(s).push(i);
-      }
-
-      // Apply patches
-      let loopPatchCount = 0;
-      for (const [spcAddr, loopSpcAddr] of spcLoopMap) {
-        const positions = spcIndex.get(spcAddr) || [];
-        for (const i of positions) {
-          rom[i+2] = loopSpcAddr & 0xFF;
-          rom[i+3] = (loopSpcAddr >> 8) & 0xFF;
-          loopPatchCount++;
-        }
-      }
-      console.log(`[brr] Loop pointers patched: ${loopPatchCount} entries across ${spcLoopMap.size} samples`);
-      if (diag) diag.push({ level: 'info', msg: `Loop pointers patched: ${loopPatchCount}` });
-    }
-
-    const msg = `BRR restore complete: ${replacements} block(s) written`;
+    const msg = `BRR restore complete: ${replacements} block(s) written, ${_loopBlockMap.size} looping sample(s) detected`;
     console.log(msg);
     if (diag) diag.push({ level: 'info', msg });
     return rom;
