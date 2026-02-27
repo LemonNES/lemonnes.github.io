@@ -1308,18 +1308,21 @@
     // the current filter, shift, and previous two output samples.
     // Returns the new decoded output sample (16-bit signed, bit 0 clear).
     //
-    // Hardware pipeline (verified against snes9x / bsnes source):
-    //   1. delta  = (nibble_signed << shift) >> 1   [arithmetic >>]
-    //   2. pred   = filter_prediction(p1, p2)        [see below]
-    //   3. raw    = pred + delta
-    //   4. output = clamp(raw, -32768, 32767)
-    //   5. output = output & ~1                      [clear bit 0]
+    // Hardware pipeline (verified against snes9x / bsnes / no$sns):
+    //   1. delta  = sign_extend4(nibble) << shift >> 1  [arithmetic >>]
+    //   2. pred   = filter_prediction(p1, p2)
+    //   3. pred   = wrap16(pred)   ← hardware 16-bit accumulator wraps before add
+    //   4. raw    = pred + delta
+    //   5. output = clamp(raw, -32768, 32767)
+    //   6. output = output & ~1   [hardware always produces even output values]
     //
-    // Filter formulas — JS >> is signed arithmetic right shift (C behaviour),
-    // identical to the SPC700's SAR instruction.  Do NOT replace with
-    // Math.trunc: for negative operands >> floors toward -∞ while Math.trunc
-    // truncates toward 0, and the hardware floors.
+    // Step 3 is the critical difference from a naive JS implementation:
+    // the SPC700 DSP computes the filter prediction in 16-bit arithmetic and
+    // the intermediate result wraps at ±32767 before being added to delta.
+    // Without this wrap, samples with filters 2/3 and large p1/p2 values will
+    // decode incorrectly on the hardware-accurate path.
     //
+    // Filter formulas (JS >> is arithmetic right shift, identical to SPC700 SAR):
     //   Filter 0: pred = 0
     //   Filter 1: pred = p1 - (p1 >> 4)                          [≈ p1 × 15/16]
     //   Filter 2: pred = (p1<<1) - (p1*3 >> 5) - p2 + (p2 >> 4) [≈ p1×61/32 − p2×15/16]
@@ -1336,6 +1339,10 @@
         case 3: pred = (p1 << 1) - ((p1 * 13) >> 6) - p2 + ((p2 * 3) >> 4); break;
       }
 
+      // Wrap pred to 16-bit signed to match SPC700 hardware accumulator overflow.
+      // Without this, filters 2/3 produce wrong results when p1/p2 are near ±32768.
+      pred = (pred << 16) >> 16;
+
       let out = pred + delta;
       // Clamp to 16-bit signed
       if (out >  32767) out =  32767;
@@ -1345,21 +1352,21 @@
     }
 
     // ── Encode one 9-byte BRR block ──────────────────────────────
-    // pcmSampleOffset: index of the first of 16 samples in pcmData
-    //   (unit = one 16-bit sample = 2 bytes; multiply by 2 for byte address).
+    // pcmSampleOffset: BYTE offset of the first of 16 samples in pcmData.
     // state: { prev1, prev2 } — updated in-place with the winning block's
     //   final decoded p1/p2 so the next block's filter has correct history.
     //
     // Strategy: exhaustive search over all 4 filters × 13 shift values
     // (shift 0–12; shifts 13–15 produce hardware-corrupt output and are
-    // excluded).  The combination with the lowest sum-of-squared-error
-    // between target PCM and simulated decoded output is chosen.
-    // This matches the approach used by snesbrr and BRRtools.
+    // excluded).  For each (filter, shift) pair, each nibble is found by
+    // testing both floor(residual/step) and floor(residual/step)+1 and
+    // picking whichever gives the smaller absolute decode error.  This is
+    // the same technique used by snesbrr and BRRtools and avoids the DC
+    // bias introduced by Math.trunc (which truncates toward zero rather
+    // than always flooring, producing asymmetric quantisation error on
+    // negative residuals).  The (filter, shift) combination with the
+    // lowest total sum-of-squared-error is chosen for the block.
     function encodeBrrBlock(pcmSampleOffset, state, forcedFilter) {
-      // pcmSampleOffset is already a BYTE offset into pcmData.
-      // (The PCMF tag stores a byte offset, matching the original snesrestore.py
-      // which uses struct.unpack '<h' at pcm_offset directly into the PCM byte array.)
-      // Each BRR block covers 16 samples × 2 bytes = 32 bytes of PCM.
       const base = pcmSampleOffset;
 
       const target = new Int32Array(16);
@@ -1372,6 +1379,7 @@
 
       const filterStart = (forcedFilter >= 0 && forcedFilter <= 3) ? forcedFilter : 0;
       const filterEnd   = (forcedFilter >= 0 && forcedFilter <= 3) ? forcedFilter : 3;
+
       for (let filter = filterStart; filter <= filterEnd; filter++) {
         for (let shift = 0; shift <= 12; shift++) {
           const block = new Uint8Array(9);
@@ -1384,14 +1392,13 @@
           let err = 0;
 
           for (let i = 0; i < 16; i++) {
-            // ── Find best nibble for this sample ──────────────────
-            // The step size is 2^(shift-1) (from the >>1 in spcDecode).
-            // shift=0 → step=0, delta always 0, only nibble 0 is useful.
             let nibble;
             if (shift === 0) {
+              // shift=0 → step=0; delta is always 0 regardless of nibble.
+              // Only nibble=0 is meaningful (no other value improves the result).
               nibble = 0;
             } else {
-              // Compute what prediction the hardware would make
+              // Compute the hardware filter prediction for the current history
               let pred;
               switch (filter) {
                 case 0: pred = 0; break;
@@ -1399,18 +1406,29 @@
                 case 2: pred = (p1 << 1) - ((p1 * 3) >> 5) - p2 + (p2 >> 4); break;
                 case 3: pred = (p1 << 1) - ((p1 * 13) >> 6) - p2 + ((p2 * 3) >> 4); break;
               }
+              // Wrap pred to 16-bit signed — must match spcDecode's hardware wrap
+              pred = (pred << 16) >> 16;
+
               const residual = target[i] - pred;
-              // Quantise: divide residual by step size, truncate toward zero
-              const step = 1 << (shift - 1); // = 2^(shift-1)
-              nibble = Math.trunc(residual / step);
-              if (nibble < -8) nibble = -8;
-              if (nibble >  7) nibble =  7;
+              // step = 2^(shift-1): the magnitude of one LSB of the nibble after
+              // the hardware's >>1 shift. Floor-division toward −∞ gives the
+              // largest nibble whose delta ≤ residual.
+              const step = 1 << (shift - 1);
+              // Use Math.floor (floors toward -inf) rather than Math.trunc
+              // (truncates toward zero) — the SPC700 uses arithmetic right-shift
+              // which floors, so the inverse must also floor.
+              const nFloor = Math.max(-8, Math.min(7, Math.floor(residual / step)));
+              const nCeil  = Math.max(-8, Math.min(7, nFloor + 1));
+
+              // Try both candidates; pick whichever gives smaller |decode error|
+              const dFloor = spcDecode(nFloor, shift, filter, p1, p2);
+              const dCeil  = spcDecode(nCeil,  shift, filter, p1, p2);
+              nibble = (Math.abs(target[i] - dFloor) <= Math.abs(target[i] - dCeil))
+                       ? nFloor : nCeil;
             }
 
-            // ── Simulate hardware decode to get actual output ──────
+            // ── Simulate hardware decode to advance p1/p2 and accumulate error ──
             const decoded = spcDecode(nibble, shift, filter, p1, p2);
-
-            // Accumulate squared error against the original PCM target
             const e = target[i] - decoded;
             err += e * e;
 
@@ -1442,13 +1460,16 @@
 
     // ── Main scan: two passes ────────────────────────────────────
     //
-    // Pass 1 — build pcmByteOffset → romPosition map from all PCMF tags
-    //           WITHOUT writing anything, so the unmodified ROM can be read
-    //           for the directory-table patch after Pass 2.
+    // Pass 1 — build rawOffset (word index) → romPosition map from all PCMF
+    //           tags WITHOUT writing anything. Keys match the PCMF tag's raw
+    //           24-bit field directly, so the directory-table patcher can look
+    //           up chains by dividing the footer's byte offset by 2.
     //
-    // Pass 2 — walk the tags again and write encoded BRR blocks.
+    // Pass 2 — walk the tags again, write encoded BRR blocks, and populate
+    //           _loopBlockMap (chainStartRomPos → loopBlockRomPos) using the
+    //           _expectedRawOff jump-detection method for accurate loop points.
 
-    // Pass 1: pcmByteOffset → ROM position of that PCMF tag
+    // Pass 1: rawOffset (word index) → ROM position of first PCMF tag with that offset
     const pcmOffsetToRomPos = new Map();
     for (let i = 0; i <= rom.length - 8; i++) {
       if (rom[i] !== 0x50 || rom[i+1] !== 0x43 || rom[i+2] !== 0x4D || rom[i+3] !== 0x46) continue;
@@ -1458,16 +1479,19 @@
     if (diag) diag.push({ level: 'info', msg: `Pass 1: mapped ${pcmOffsetToRomPos.size} distinct PCM offsets` });
     console.log(`[brr] Pass 1: mapped ${pcmOffsetToRomPos.size} distinct PCM offsets`);
 
-// Pass 2: encode and write BRR blocks
-    let lastPcmOffset = -1;
-    let replacements  = 0;
-    let pos           = 0;
-    let decoderState  = { prev1: 0, prev2: 0 };
+    // Pass 2: encode and write BRR blocks
+    // Uses _expectedRawOff to detect loop points by identifying when the rawOffset
+    // in the chain jumps rather than advancing sequentially by 16. This correctly
+    // handles both looping samples (loop=1 on end block) and one-shot SFX (loop=0).
+    let lastPcmOffset   = -1;
+    let replacements    = 0;
+    let pos             = 0;
+    let decoderState    = { prev1: 0, prev2: 0 };
     let _sampleChain    = 0;
-    let _resetNextBlock = true;
-    let _chainStartRom  = -1;
-    let _isFirstBlock   = true;
-    let _expectedRawOff = -1; // expected rawOffset for next sequential block in chain
+    let _resetNextBlock = true;  // reset decoder state before the very first block
+    let _chainStartRom  = -1;    // ROM position of the first block in the current chain
+    let _isFirstBlock   = true;  // true at the start of each new sample chain
+    let _expectedRawOff = -1;    // expected rawOffset for the next sequential block
     const _loopBlockMap = new Map(); // chainStartRomPos → loopBlockRomPos
 
     while (pos <= rom.length - 8) {
@@ -1479,27 +1503,35 @@
       const endBit    = flagsByte & 0x01;
       const loopBit   = flagsByte & 0x02;
 
-      const pcmOffset = rawOffset * 2; // rawOffset is word index; *2 = byte offset
-      // Decoder state resets only after an end block (true new sample).
-      // rawOff=0 mid-chain is the LOOP POINT marker — do NOT reset state there.
-      // _resetNextBlock is set when endBit=1 is processed.
+      const pcmOffset = rawOffset * 2; // rawOffset is a word index; ×2 = byte offset into pcmData
+
+      // Decoder state resets only when starting a new sample chain (after an end block).
+      // _resetNextBlock is set when endBit=1 is processed below.
       if (_resetNextBlock) {
-        decoderState = { prev1: 0, prev2: 0 };
+        decoderState    = { prev1: 0, prev2: 0 };
         _resetNextBlock = false;
       }
 
       const forcedFilter = (flagsByte >> 2) & 0x03; // PCMF flags[3:2] = original BRR filter
 
-      // Chain start: _isFirstBlock is set true after each end block.
-      // Loop point: consecutive blocks in a chain have rawOffset increasing by exactly 16
-      // (16 samples per block). A mid-chain block where rawOffset != expectedNext means
-      // the PCM data jumps back to the loop start — that block IS the loop point.
+      // ── Chain tracking & loop detection (accurate _expectedRawOff method) ──
+      // Consecutive blocks within a chain have rawOffset increasing by exactly 16
+      // (one BRR block covers 16 samples). When rawOffset deviates from
+      // _expectedRawOff mid-chain, the PCM stream has jumped back to the loop
+      // start — that block IS the loop point.
+      //
+      // Critical constraint: the end block (endBit=1) is NEVER the loop point.
+      // The SPC700 loop mechanism jumps from the end block BACK TO the loop point,
+      // so the loop point must precede the end block. Marking an end block as the
+      // loop point would produce a garbage loop address for one-shot SFX whose
+      // final block happens to be at a non-sequential rawOffset (e.g. tail padding).
       if (_isFirstBlock) {
         _chainStartRom  = pos;
         _isFirstBlock   = false;
         _expectedRawOff = rawOffset + 16;
       } else {
-        if (rawOffset !== _expectedRawOff && _chainStartRom >= 0) {
+        if (!endBit && rawOffset !== _expectedRawOff && _chainStartRom >= 0) {
+          // Non-terminal block with a rawOffset jump → this is the loop point.
           if (!_loopBlockMap.has(_chainStartRom)) {
             _loopBlockMap.set(_chainStartRom, pos);
           }
@@ -1507,19 +1539,25 @@
         _expectedRawOff = rawOffset + 16;
       }
 
-      // Detailed logging: first 3 complete sample chains
+      // Detailed logging for the first 3 complete sample chains
       if (replacements === 0) console.log('[brr] === Scanning sample chains ===');
       if (_sampleChain < 3) {
         console.log(`[brr] blk=${replacements} rom=0x${pos.toString(16).padStart(5,'0')} pcmOff=${pcmOffset} rawOff=${rawOffset} flags=0x${flagsByte.toString(16).padStart(2,'0')} filter=${forcedFilter} end=${endBit} loop=${(flagsByte>>1)&1}`);
       }
       if (endBit && _sampleChain < 3) { _sampleChain++; console.log('[brr] --- end of sample chain ' + _sampleChain + ' ---'); }
+
       const brr = encodeBrrBlock(pcmOffset, decoderState, forcedFilter);
-      // Set end bit always when endBit; set loop bit only for samples that have
-      // a loop point — one-shot SFX must NOT have loop=1.
+
+      // Set flags on the terminal block:
+      //   - Looping samples: end=1 + loop=1 (0x03) → SPC700 loops back to loop point
+      //   - One-shot SFX:    end=1 only    (0x01) → SPC700 stops after this block
+      // Intermediate blocks receive no end/loop bits (no-op OR of 0x00).
       if (endBit) {
         brr[0] |= _loopBlockMap.has(_chainStartRom) ? 0x03 : 0x01;
       }
+
       for (let b = 0; b < 9 && pos + b < rom.length; b++) rom[pos + b] = brr[b];
+
       if (endBit) {
         _resetNextBlock = true;
         _isFirstBlock   = true;
@@ -1528,6 +1566,94 @@
       lastPcmOffset = pcmOffset;
       replacements++;
       pos += 9;
+    }
+
+    // ── Directory table patch ────────────────────────────────────
+    //
+    // The PCM footer contains 6-byte records describing each instrument:
+    //   bytes 0-2 (LE 24-bit): PCM BYTE offset into the PCM blob (pcmOff)
+    //   bytes 3-5 (LE 24-bit): SPC700 RAM address where Canoe injects the sample (spcAddr)
+    //
+    // To find the loop SPC700 address for each sample we:
+    //   1. Convert pcmOff (byte) → rawOff (word) = pcmOff / 2
+    //   2. Look up chainStartRomPos = pcmOffsetToRomPos.get(rawOff)
+    //      (Pass 1 keyed on rawOffset word indices, matching PCMF tag field)
+    //   3. Look up loopRomPos = _loopBlockMap.get(chainStartRomPos)
+    //      (populated during Pass 2 via _expectedRawOff jump detection)
+    //   4. loopSpcAddr = spcAddr + (loopRomPos - chainStartRomPos)
+    //      because the driver copies BRR data sequentially into SPC RAM starting
+    //      at spcAddr, so the ROM offset delta equals the SPC RAM offset delta
+    //   5. Scan the ROM for directory entries whose start word matches spcAddr
+    //      and patch their loop word to loopSpcAddr.
+
+    if (pcmFooter && pcmFooter.length >= 6 && pcmFooter.length % 6 === 0) {
+      const numRecords = pcmFooter.length / 6;
+
+      // Parse 6-byte footer records
+      const footerRecords = [];
+      for (let r = 0; r < numRecords; r++) {
+        const base    = r * 6;
+        const pcmOff  = pcmFooter[base]   | (pcmFooter[base+1] << 8) | (pcmFooter[base+2] << 16);
+        const spcAddr = pcmFooter[base+3] | (pcmFooter[base+4] << 8) | (pcmFooter[base+5] << 16);
+        footerRecords.push({ pcmOff, spcAddr });
+      }
+
+      // Build spcAddr → loopSpcAddr map for all footer records.
+      // pcmOff from the footer is a BYTE offset; divide by 2 to get the rawOff
+      // word index used as the key in pcmOffsetToRomPos (built during Pass 1).
+      const spcLoopMap  = new Map(); // spcAddr → loopSpcAddr
+      const loggedLoops = [];
+      for (const { pcmOff, spcAddr } of footerRecords) {
+        if (spcLoopMap.has(spcAddr)) continue; // already computed for this SPC slot
+        const rawOff           = pcmOff / 2;
+        const chainStartRomPos = pcmOffsetToRomPos.get(rawOff);
+        if (chainStartRomPos === undefined) continue;
+        const loopRomPos  = _loopBlockMap.get(chainStartRomPos);
+        const loopSpcAddr = loopRomPos !== undefined
+          ? (spcAddr + (loopRomPos - chainStartRomPos)) & 0xFFFF
+          : spcAddr; // one-shot: loop pointer = start pointer (safe fallback)
+        spcLoopMap.set(spcAddr, loopSpcAddr);
+        loggedLoops.push(
+          `spc=0x${spcAddr.toString(16).padStart(4,'0')} ` +
+          `loopRom=${loopRomPos !== undefined ? '0x'+loopRomPos.toString(16) : 'none'} ` +
+          `loopSpc=0x${loopSpcAddr.toString(16).padStart(4,'0')}`
+        );
+      }
+      loggedLoops.slice(0, 10).forEach(m => console.log('[brr]', m));
+
+      // Build an index of ROM positions where each known spcAddr appears as a
+      // little-endian 16-bit word, followed by a plausible loop pointer.
+      // Validity criteria for a BRR directory entry at position i:
+      //   1. rom[i..i+1]  == spcAddr (LE16) — the sample start address
+      //   2. rom[i+2..i+3] == loopAddr (LE16) — loop pointer >= start
+      //   3. (loopAddr - spcAddr) % 9 == 0   — distance is a whole number of
+      //      BRR blocks (9 bytes each); false positives in ROM code/data are
+      //      extremely unlikely to satisfy this alignment constraint
+      //   4. loopAddr <= spcAddr + 0x7FFF   — within a plausible SPC RAM window
+      const spcIndex = new Map(); // spcAddr → [ROM positions of matching dir entries]
+      for (const spcAddr of spcLoopMap.keys()) {
+        spcIndex.set(spcAddr, []);
+      }
+      for (let i = 0; i + 3 < rom.length; i++) {
+        const s = rom[i] | (rom[i+1] << 8);
+        if (!spcIndex.has(s)) continue;
+        const l = rom[i+2] | (rom[i+3] << 8);
+        // Loop pointer must be >= start, within 32 KB, and at a 9-byte BRR boundary
+        if (l >= s && l <= s + 0x7FFF && (l - s) % 9 === 0) spcIndex.get(s).push(i);
+      }
+
+      // Patch directory entries: overwrite the loop pointer word (bytes +2/+3)
+      let loopPatchCount = 0;
+      for (const [spcAddr, loopSpcAddr] of spcLoopMap) {
+        const positions = spcIndex.get(spcAddr) || [];
+        for (const i of positions) {
+          rom[i+2] = loopSpcAddr & 0xFF;
+          rom[i+3] = (loopSpcAddr >> 8) & 0xFF;
+          loopPatchCount++;
+        }
+      }
+      console.log(`[brr] Loop pointers patched: ${loopPatchCount} entries across ${spcLoopMap.size} samples`);
+      if (diag) diag.push({ level: 'info', msg: `Loop pointers patched: ${loopPatchCount}` });
     }
 
     const msg = `BRR restore complete: ${replacements} block(s) written, ${_loopBlockMap.size} looping sample(s) detected`;
