@@ -1458,24 +1458,16 @@
     if (diag) diag.push({ level: 'info', msg: `Pass 1: mapped ${pcmOffsetToRomPos.size} distinct PCM offsets` });
     console.log(`[brr] Pass 1: mapped ${pcmOffsetToRomPos.size} distinct PCM offsets`);
 
-    // Diagnostic: dump PCM bytes at key offsets to verify format and positioning
-    {
-      const dump = (label, byteOff, len) => {
-        const bytes = Array.from(pcmData.slice(byteOff, byteOff + len))
-          .map(b => b.toString(16).padStart(2,'0')).join(' ');
-        console.log(`[pcm] ${label} @ byte ${byteOff} (0x${byteOff.toString(16)}): ${bytes}`);
-      };
-      dump('pcmData[0..31]', 0, 32);
-      dump('pcmData[0x100..0x12f]', 0x100, 48);
-      dump('pcmData[0x112..0x141]', 0x112, 48); // first real sample per footer
-      dump('pcmData[0x224..0x253]', 0x224, 48); // rawOff=0x112 * 2 = 0x224 if word*2
-    }
-
-    // Pass 2: encode and write BRR blocks
+// Pass 2: encode and write BRR blocks
     let lastPcmOffset = -1;
     let replacements  = 0;
     let pos           = 0;
     let decoderState  = { prev1: 0, prev2: 0 };
+    let _sampleChain    = 0;
+    let _resetNextBlock = true; // reset state before first block
+    let _chainStartRom  = -1;   // ROM position of first block in current chain
+    let _isFirstBlock   = true; // true for the very first block of each chain
+    const _loopBlockMap = new Map(); // chainStartRomPos → loopBlockRomPos
 
     while (pos <= rom.length - 8) {
       if (rom[pos]   !== 0x50 || rom[pos+1] !== 0x43 ||
@@ -1486,28 +1478,45 @@
       const endBit    = flagsByte & 0x01;
       const loopBit   = flagsByte & 0x02;
 
-      // Always trust the tag's own rawOffset — it is a byte offset into the PCM blob.
-      // The old lastPcmOffset+32 fallback was a guess that produced wrong PCM windows
-      // when Nintendo's offsets weren't multiples of 32.
-      // rawOffset is a sample-word index (units of 16-bit samples).
-      // Multiply by 2 to get the byte offset into the PCM blob.
-      const pcmOffset = rawOffset * 2;
-      // Reset decoder state at the start of a new sample chain.
-      if (lastPcmOffset < 0 || rawOffset === 0 || rawOffset < lastPcmOffset) {
+      const pcmOffset = rawOffset * 2; // rawOffset is word index; *2 = byte offset
+      // Decoder state resets only after an end block (true new sample).
+      // rawOff=0 mid-chain is the LOOP POINT marker — do NOT reset state there.
+      // _resetNextBlock is set when endBit=1 is processed.
+      if (_resetNextBlock) {
         decoderState = { prev1: 0, prev2: 0 };
-      }
-
-      if (replacements < 8) {
-        const _bMsg = `brr[${replacements}] rom=0x${pos.toString(16)} pcmOff=${pcmOffset} rawOff=${rawOffset} flags=0x${flagsByte.toString(16).padStart(2,'0')}`;
-        if (diag) diag.push({ level: 'info', msg: _bMsg });
-        console.log('[brr]', _bMsg);
+        _resetNextBlock = false;
       }
 
       const forcedFilter = (flagsByte >> 2) & 0x03; // PCMF flags[3:2] = original BRR filter
+
+      // Track chain start and loop point
+      if (_isFirstBlock || _resetNextBlock) {
+        _chainStartRom = pos;
+        _isFirstBlock  = false;
+      } else if (rawOffset === 0 && _chainStartRom >= 0) {
+        // rawOff=0 mid-chain = loop point marker
+        if (!_loopBlockMap.has(_chainStartRom)) {
+          _loopBlockMap.set(_chainStartRom, pos);
+        }
+      }
+
+      // Detailed logging: first 3 complete sample chains
+      if (replacements === 0) console.log('[brr] === Scanning sample chains ===');
+      if (_sampleChain < 3) {
+        console.log(`[brr] blk=${replacements} rom=0x${pos.toString(16).padStart(5,'0')} pcmOff=${pcmOffset} rawOff=${rawOffset} flags=0x${flagsByte.toString(16).padStart(2,'0')} filter=${forcedFilter} end=${endBit} loop=${(flagsByte>>1)&1}`);
+      }
+      if (endBit && _sampleChain < 3) { _sampleChain++; console.log('[brr] --- end of sample chain ' + _sampleChain + ' ---'); }
       const brr = encodeBrrBlock(pcmOffset, decoderState, forcedFilter);
-      brr[0] |= endBit | loopBit;
+      // PCMF bit 0 = BRR end flag. PCMF bit 1 is NOT the BRR loop flag —
+      // it is set on every block and means "carry decoder state".
+      // Set BRR loop flag only on end blocks so the sample loops back to start.
+      if (endBit) brr[0] |= 0x03; // end=1 + loop=1 on terminal block
+      else        brr[0] |= 0x00; // intermediate blocks: no end, no loop
       for (let b = 0; b < 9 && pos + b < rom.length; b++) rom[pos + b] = brr[b];
-      if (endBit) decoderState = { prev1: 0, prev2: 0 };
+      if (endBit) {
+        _resetNextBlock = true;
+        _isFirstBlock   = true;
+      }
 
       lastPcmOffset = pcmOffset;
       replacements++;
@@ -1549,7 +1558,7 @@
     if (pcmFooter && pcmFooter.length >= 6 && pcmFooter.length % 6 === 0) {
       const numRecords = pcmFooter.length / 6;
 
-      // Parse all 6-byte records
+      // Parse 6-byte footer records: (pcm_offset word-index, spc_addr)
       const footerRecords = [];
       for (let r = 0; r < numRecords; r++) {
         const base    = r * 6;
@@ -1557,73 +1566,71 @@
         const spcAddr = pcmFooter[base+3] | (pcmFooter[base+4] << 8) | (pcmFooter[base+5] << 16);
         footerRecords.push({ pcmOff, spcAddr });
       }
-      if (diag) diag.push({ level: 'info', msg: `PCM footer: ${numRecords} records (6-byte format)` });
 
-      // Locate the SPC700 DIR table in ROM.
-      // The DIR table contains 4-byte entries: [start_lo, start_hi, loop_lo, loop_hi].
-      // We know the exact SPC addresses from the footer records — use them to anchor the scan.
-      // Validation: look for a run of 4-byte entries where start addresses match known
-      // SPC addresses from our footer records (all 0x10-aligned, range 0x0000–0xFFFF).
-      // CORRECTED: removed the 0x2000 floor — SMW uses addresses starting at 0x00b0.
-      const knownSpcAddrs = new Set(footerRecords.map(r => r.spcAddr));
-      const MIN_MATCH = Math.min(4, numRecords);
-      let dirTableRomPos = -1;
+      // Build map: rawOff (word index) → ROM position of first block with that rawOff
+      // pcmOffsetToRomPos keys are rawOff values (word indices, same as PCMF rawOffset field)
+      // Footer pcmOff values are byte offsets — divide by 2 to get word index for lookup
+      //
+      // For each sample chain, the footer gives us:
+      //   pcmOff (byte) / 2 = rawOff of the chain's first block → ROM start of chain
+      //   spcAddr = SPC RAM address where the chain starts
+      //
+      // The loop block within a chain has rawOff=0 (mid-chain marker).
+      // Its ROM position is in pcmOffsetToRomPos.get(0) — but rawOff=0 appears in
+      // every chain's loop block. We need the specific instance for each chain.
+      //
+      // Better: during Pass 2 we know each block's ROM position. Build a map of
+      // chainStartRawOff → loopBlockRomPos by tracking which rawOff=0 block
+      // belongs to which chain (identified by the preceding chain start rawOff).
+      // We already collected this in _loopBlockMap built during Pass 2.
 
-      // SMW has multiple SPC programs uploaded to SPC700 RAM at different times,
-      // each with its own DIR table. We find ALL of them by scanning for runs of
-      // 4-byte entries [start_lo start_hi loop_lo loop_hi] where:
-      //   - start is 16-byte aligned (SPC700 hardware requirement)
-      //   - loop >= start and within 32KB of start
-      //   - at least one entry within the run matches a known SPC address
-      // We do NOT require the first entry to match — tables often begin with
-      // low-address entries (e.g. 0x0100) before reaching our known addresses.
-      const dirTables = [];
-      const patchedBytes = new Set(); // avoid double-patching overlapping regions
-      for (let scan = 0; scan + 3 < rom.length; scan += 2) {
-        const s0 = rom[scan] | (rom[scan+1] << 8);
-        // First entry must be 16-byte aligned and nonzero, but not necessarily known
-        if (s0 === 0 || (s0 & 0xF) !== 0) continue;
-        const l0 = rom[scan+2] | (rom[scan+3] << 8);
-        if (l0 < s0 || l0 > s0 + 0x7FFF) continue;
-        if (patchedBytes.has(scan)) continue;
-        // Extend the run as far as valid entries continue
-        let count = 0, score = 0;
-        for (let e = 0; scan + e*4 + 3 < rom.length; e++) {
-          const s = rom[scan + e*4] | (rom[scan + e*4 + 1] << 8);
-          const l = rom[scan + e*4 + 2] | (rom[scan + e*4 + 3] << 8);
-          if (s === 0 || (s & 0xF) !== 0) break;
-          if (l < s || l > s + 0x7FFF) break;
-          count++;
-          if (knownSpcAddrs.has(s)) score++;
-        }
-        if (score >= MIN_MATCH) {
-          dirTables.push({ romPos: scan, numEntries: count, score });
-          console.log(`[brr] Dir table at ROM 0x${scan.toString(16)}: ${count} entries, ${score} match known SPC addrs`);
-          for (let e = 0; e < count; e++) patchedBytes.add(scan + e*4);
-        }
+      // Build map: rawOff → chainStartRomPos from pcmOffsetToRomPos
+      // pcmOffsetToRomPos keys are rawOff word indices (same as PCMF rawOffset field)
+      // Footer pcmOff values are BYTE offsets → divide by 2 to get rawOff word index
+
+      // Build spcAddr → computed loopSpcAddr map for all footer records
+      const spcLoopMap = new Map(); // spcAddr → loopSpcAddr
+      const loggedLoops = [];
+      for (const { pcmOff, spcAddr } of footerRecords) {
+        if (spcLoopMap.has(spcAddr)) continue; // already computed
+        const rawOff = pcmOff / 2;
+        const chainStartRomPos = pcmOffsetToRomPos.get(rawOff);
+        if (chainStartRomPos === undefined) continue;
+        const loopRomPos = _loopBlockMap.get(chainStartRomPos);
+        const loopSpcAddr = loopRomPos !== undefined
+          ? (spcAddr + (loopRomPos - chainStartRomPos)) & 0xFFFF
+          : spcAddr;
+        spcLoopMap.set(spcAddr, loopSpcAddr);
+        loggedLoops.push(`spc=0x${spcAddr.toString(16).padStart(4,'0')} loopRom=${loopRomPos !== undefined ? '0x'+loopRomPos.toString(16) : 'none'} loopSpc=0x${loopSpcAddr.toString(16).padStart(4,'0')}`);
+      }
+      loggedLoops.slice(0,10).forEach(m => console.log('[brr]', m));
+
+      // Build ROM index: (lo<<8|hi) → [positions] with single pass over ROM
+      // Only index positions where bytes match a known spcAddr pair AND
+      // the following 2 bytes look like a valid loop pointer (>= start, within 32KB)
+      const spcIndex = new Map(); // spcAddr → [rom positions of dir entries]
+      for (const spcAddr of spcLoopMap.keys()) {
+        spcIndex.set(spcAddr, []);
+      }
+      for (let i = 0; i + 3 < rom.length; i++) {
+        const s = rom[i] | (rom[i+1] << 8);
+        if (!spcIndex.has(s)) continue;
+        const l = rom[i+2] | (rom[i+3] << 8);
+        if (l >= s && l <= s + 0x7FFF) spcIndex.get(s).push(i);
       }
 
-      if (dirTables.length > 0) {
-        let totalPatched = 0;
-        for (const { romPos: tablePos, numEntries } of dirTables) {
-          for (let e = 0; e < numEntries; e++) {
-            const eBase = tablePos + e * 4;
-            const spcAddr = rom[eBase] | (rom[eBase+1] << 8);
-            if (!knownSpcAddrs.has(spcAddr)) continue;
-            // Set loop pointer = spcAddr (loop entire sample — correct for
-            // BRR blocks encoded with end+loop on the final block)
-            rom[eBase + 2] = spcAddr & 0xFF;
-            rom[eBase + 3] = (spcAddr >> 8) & 0xFF;
-            totalPatched++;
-          }
+      // Apply patches
+      let loopPatchCount = 0;
+      for (const [spcAddr, loopSpcAddr] of spcLoopMap) {
+        const positions = spcIndex.get(spcAddr) || [];
+        for (const i of positions) {
+          rom[i+2] = loopSpcAddr & 0xFF;
+          rom[i+3] = (loopSpcAddr >> 8) & 0xFF;
+          loopPatchCount++;
         }
-        const dirMsg = `Directory table(s) patched: ${totalPatched} loop pointers across ${dirTables.length} table(s)`;
-        if (diag) diag.push({ level: 'info', msg: dirMsg });
-        console.log('[brr]', dirMsg);
-      } else {
-        console.warn('[brr] Could not locate any SPC700 directory tables in ROM');
-        if (diag) diag.push({ level: 'warn', msg: 'Could not locate any SPC700 directory tables in ROM' });
       }
+      console.log(`[brr] Loop pointers patched: ${loopPatchCount} entries across ${spcLoopMap.size} samples`);
+      if (diag) diag.push({ level: 'info', msg: `Loop pointers patched: ${loopPatchCount}` });
     }
 
     const msg = `BRR restore complete: ${replacements} block(s) written`;
