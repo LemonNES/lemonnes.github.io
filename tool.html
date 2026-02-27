@@ -1452,7 +1452,7 @@
     const pcmOffsetToRomPos = new Map();
     for (let i = 0; i <= rom.length - 8; i++) {
       if (rom[i] !== 0x50 || rom[i+1] !== 0x43 || rom[i+2] !== 0x4D || rom[i+3] !== 0x46) continue;
-      const off = rom[i+4] | (rom[i+5] << 8) | (rom[i+6] << 16);
+      const off = rom[i+4] | (rom[i+5] << 8) | (rom[i+6] << 16); // byte offset
       if (!pcmOffsetToRomPos.has(off)) pcmOffsetToRomPos.set(off, i);
     }
     if (diag) diag.push({ level: 'info', msg: `Pass 1: mapped ${pcmOffsetToRomPos.size} distinct PCM offsets` });
@@ -1478,9 +1478,8 @@
       const endBit    = flagsByte & 0x01;
       const loopBit   = flagsByte & 0x02;
 
-      const pcmOffset = rawOffset * 2; // rawOffset is word index; *2 = byte offset
+      const pcmOffset = rawOffset; // rawOffset is already a byte offset into pcmData
       // Decoder state resets only after an end block (true new sample).
-      // rawOff=0 mid-chain is the LOOP POINT marker — do NOT reset state there.
       // _resetNextBlock is set when endBit=1 is processed.
       if (_resetNextBlock) {
         decoderState = { prev1: 0, prev2: 0 };
@@ -1490,11 +1489,11 @@
       const forcedFilter = (flagsByte >> 2) & 0x03; // PCMF flags[3:2] = original BRR filter
 
       // Track chain start and loop point
-      if (_isFirstBlock || _resetNextBlock) {
+      if (_resetNextBlock) {
         _chainStartRom = pos;
         _isFirstBlock  = false;
-      } else if (rawOffset === 0 && _chainStartRom >= 0) {
-        // rawOff=0 mid-chain = loop point marker
+      } else if (loopBit && _chainStartRom >= 0) {
+        // loopBit set on a non-end block = loop point for this chain
         if (!_loopBlockMap.has(_chainStartRom)) {
           _loopBlockMap.set(_chainStartRom, pos);
         }
@@ -1515,7 +1514,7 @@
       for (let b = 0; b < 9 && pos + b < rom.length; b++) rom[pos + b] = brr[b];
       if (endBit) {
         _resetNextBlock = true;
-        _isFirstBlock   = true;
+        _chainStartRom  = -1;
       }
 
       lastPcmOffset = pcmOffset;
@@ -1584,17 +1583,14 @@
       // belongs to which chain (identified by the preceding chain start rawOff).
       // We already collected this in _loopBlockMap built during Pass 2.
 
-      // Build map: rawOff → chainStartRomPos from pcmOffsetToRomPos
-      // pcmOffsetToRomPos keys are rawOff word indices (same as PCMF rawOffset field)
-      // Footer pcmOff values are BYTE offsets → divide by 2 to get rawOff word index
-
       // Build spcAddr → computed loopSpcAddr map for all footer records
       const spcLoopMap = new Map(); // spcAddr → loopSpcAddr
       const loggedLoops = [];
+      // Footer pcmOff values are byte offsets, same as rawOffset in PCMF tags
+      // pcmOffsetToRomPos is keyed by byte offset directly
       for (const { pcmOff, spcAddr } of footerRecords) {
         if (spcLoopMap.has(spcAddr)) continue; // already computed
-        const rawOff = pcmOff / 2;
-        const chainStartRomPos = pcmOffsetToRomPos.get(rawOff);
+        const chainStartRomPos = pcmOffsetToRomPos.get(pcmOff);
         if (chainStartRomPos === undefined) continue;
         const loopRomPos = _loopBlockMap.get(chainStartRomPos);
         const loopSpcAddr = loopRomPos !== undefined
