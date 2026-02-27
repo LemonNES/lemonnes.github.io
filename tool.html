@@ -1298,8 +1298,8 @@
     // Returns a 16-bit signed sample from pcmData at BYTE offset.
     function readPcm(byteOff) {
       if (byteOff + 2 > pcmData.length) return 0;
-      // PCM is 16-bit signed little-endian (matches snesrestore.py struct.unpack '<h')
-      const raw = pcmData[byteOff] | (pcmData[byteOff + 1] << 8);
+      // PCM is 16-bit signed big-endian
+      const raw = (pcmData[byteOff] << 8) | pcmData[byteOff + 1];
       return raw >= 0x8000 ? raw - 0x10000 : raw;
     }
 
@@ -1478,7 +1478,7 @@
       const endBit    = flagsByte & 0x01;
       const loopBit   = flagsByte & 0x02;
 
-      const pcmOffset = rawOffset; // rawOffset is already a byte offset into pcmData (snesrestore.py uses it directly with struct.unpack '<h')
+      const pcmOffset = rawOffset * 2; // rawOffset is word index; *2 = byte offset
       // Decoder state resets only after an end block (true new sample).
       // rawOff=0 mid-chain is the LOOP POINT marker — do NOT reset state there.
       // _resetNextBlock is set when endBit=1 is processed.
@@ -1490,8 +1490,8 @@
       const forcedFilter = (flagsByte >> 2) & 0x03; // PCMF flags[3:2] = original BRR filter
 
       // Track chain start and loop point.
-      // _isFirstBlock is set true after each end block so we capture _chainStartRom
-      // at the first block of every new chain, not just the very first ever.
+      // NOTE: _resetNextBlock is already false here (cleared above), so checking
+      // it again would always be false. _isFirstBlock is the correct gate.
       if (_isFirstBlock) {
         _chainStartRom = pos;
         _isFirstBlock  = false;
@@ -1511,9 +1511,13 @@
       const brr = encodeBrrBlock(pcmOffset, decoderState, forcedFilter);
       // PCMF bit 0 = BRR end flag. PCMF bit 1 is NOT the BRR loop flag —
       // it is set on every block and means "carry decoder state".
-      // Set BRR loop flag only on end blocks so the sample loops back to start.
-      if (endBit) brr[0] |= 0x03; // end=1 + loop=1 on terminal block
-      else        brr[0] |= 0x00; // intermediate blocks: no end, no loop
+      // Only set loop=1 on end blocks for samples that actually loop.
+      // One-shot samples (SFX, etc.) must use end=1 + loop=0, otherwise
+      // the SPC700 voice loops indefinitely and corrupts subsequent audio.
+      if (endBit) {
+        const isLooping = _loopBlockMap.has(_chainStartRom);
+        brr[0] |= isLooping ? 0x03 : 0x01; // looping: end+loop; one-shot: end only
+      }
       for (let b = 0; b < 9 && pos + b < rom.length; b++) rom[pos + b] = brr[b];
       if (endBit) {
         _resetNextBlock = true;
@@ -1595,7 +1599,8 @@
       const loggedLoops = [];
       for (const { pcmOff, spcAddr } of footerRecords) {
         if (spcLoopMap.has(spcAddr)) continue; // already computed
-        const chainStartRomPos = pcmOffsetToRomPos.get(pcmOff); // pcmOff is byte offset, matches rawOffset key
+        const rawOff = pcmOff / 2;
+        const chainStartRomPos = pcmOffsetToRomPos.get(rawOff);
         if (chainStartRomPos === undefined) continue;
         const loopRomPos = _loopBlockMap.get(chainStartRomPos);
         const loopSpcAddr = loopRomPos !== undefined
