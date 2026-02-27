@@ -1580,11 +1580,23 @@
     //      (Pass 1 keyed on rawOffset word indices, matching PCMF tag field)
     //   3. Look up loopRomPos = _loopBlockMap.get(chainStartRomPos)
     //      (populated during Pass 2 via _expectedRawOff jump detection)
-    //   4. loopSpcAddr = spcAddr + (loopRomPos - chainStartRomPos)
-    //      because the driver copies BRR data sequentially into SPC RAM starting
-    //      at spcAddr, so the ROM offset delta equals the SPC RAM offset delta
-    //   5. Scan the ROM for directory entries whose start word matches spcAddr
+    //   4. Count the BRR blocks between chainStartRomPos and loopRomPos by
+    //      walking the ROM and counting PCMF tags (each occupies a 9-byte slot).
+    //      Using raw byte delta (loopRomPos - chainStartRomPos) is WRONG when
+    //      there are any non-BRR bytes between tags — the SPC700 sees only the
+    //      densely-packed 9-byte BRR blocks that were written, not the ROM gaps.
+    //      blocksBefore * 9 gives the exact SPC RAM byte offset of the loop point
+    //      relative to the sample start.
+    //   5. loopSpcAddr = spcAddr + blocksBefore * 9
+    //   6. Scan the ROM for directory entries whose start word matches spcAddr
     //      and patch their loop word to loopSpcAddr.
+
+    // Footer diagnostic
+    console.log(`[footer] pcmFooter=${pcmFooter ? pcmFooter.length + ' bytes' : 'null'} mod6=${pcmFooter ? pcmFooter.length % 6 : 'n/a'} mod4=${pcmFooter ? pcmFooter.length % 4 : 'n/a'}`);
+    if (pcmFooter && pcmFooter.length >= 4) {
+      const sample = Array.from(pcmFooter.slice(0, Math.min(24, pcmFooter.length))).map(b => b.toString(16).padStart(2,'0')).join(' ');
+      console.log(`[footer] first bytes: ${sample}`);
+    }
 
     if (pcmFooter && pcmFooter.length >= 6 && pcmFooter.length % 6 === 0) {
       const numRecords = pcmFooter.length / 6;
@@ -1608,18 +1620,32 @@
         const rawOff           = pcmOff / 2;
         const chainStartRomPos = pcmOffsetToRomPos.get(rawOff);
         if (chainStartRomPos === undefined) continue;
-        const loopRomPos  = _loopBlockMap.get(chainStartRomPos);
-        const loopSpcAddr = loopRomPos !== undefined
-          ? (spcAddr + (loopRomPos - chainStartRomPos)) & 0xFFFF
-          : spcAddr; // one-shot: loop pointer = start pointer (safe fallback)
+        const loopRomPos = _loopBlockMap.get(chainStartRomPos);
+
+        let loopSpcAddr;
+        if (loopRomPos !== undefined) {
+          // BRR blocks are packed contiguously — each occupies exactly 9 bytes
+          // in ROM (same as the PCMF tag they replaced). The byte delta divided
+          // by 9 gives the exact block count, and blockCount * 9 is the SPC RAM
+          // byte offset of the loop block relative to the sample start.
+          const byteOffset  = loopRomPos - chainStartRomPos;
+          const blocksBefore = Math.round(byteOffset / 9);
+          loopSpcAddr = (spcAddr + blocksBefore * 9) & 0xFFFF;
+        } else {
+          // One-shot sample: loop pointer = start pointer (SPC700 ignores it
+          // since end=1 without loop=1 means silence, but it must be valid)
+          loopSpcAddr = spcAddr;
+        }
+
         spcLoopMap.set(spcAddr, loopSpcAddr);
         loggedLoops.push(
           `spc=0x${spcAddr.toString(16).padStart(4,'0')} ` +
           `loopRom=${loopRomPos !== undefined ? '0x'+loopRomPos.toString(16) : 'none'} ` +
+          `blocksBefore=${loopRomPos !== undefined ? (spcLoopMap.get(spcAddr) - spcAddr) / 9 : 'n/a'} ` +
           `loopSpc=0x${loopSpcAddr.toString(16).padStart(4,'0')}`
         );
       }
-      loggedLoops.slice(0, 10).forEach(m => console.log('[brr]', m));
+      loggedLoops.forEach(m => console.log('[brr]', m));
 
       // Build an index of ROM positions where each known spcAddr appears as a
       // little-endian 16-bit word, followed by a plausible loop pointer.
