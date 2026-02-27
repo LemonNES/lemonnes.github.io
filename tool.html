@@ -1466,7 +1466,8 @@
     let _sampleChain    = 0;
     let _resetNextBlock = true; // reset state before first block
     let _chainStartRom  = -1;   // ROM position of first block in current chain
-    let _isFirstBlock   = true; // true for the very first block of each chain
+    let _isFirstBlock   = true; // true for the very first block of each new chain
+    let _expectedRawOff = -1;   // expected rawOffset for the next sequential block in chain
     const _loopBlockMap = new Map(); // chainStartRomPos → loopBlockRomPos
 
     while (pos <= rom.length - 8) {
@@ -1490,16 +1491,25 @@
       const forcedFilter = (flagsByte >> 2) & 0x03; // PCMF flags[3:2] = original BRR filter
 
       // Track chain start and loop point.
-      // NOTE: _resetNextBlock is already false here (cleared above), so checking
-      // it again would always be false. _isFirstBlock is the correct gate.
+      // _isFirstBlock gates: after end bit is processed we set it true, so
+      // _chainStartRom is correctly updated at the first block of every new chain.
+      // Loop point detection: within a chain, each block's rawOffset should be
+      // exactly previousRawOffset + 16 (sequential 16-sample steps).
+      // A non-sequential rawOffset mid-chain means this block IS the loop point —
+      // it jumps back to wherever the loop starts in the PCM data.
+      // (The old rawOffset===0 check only detected samples that loop from offset 0.)
       if (_isFirstBlock) {
-        _chainStartRom = pos;
-        _isFirstBlock  = false;
-      } else if (rawOffset === 0 && _chainStartRom >= 0) {
-        // rawOff=0 mid-chain = loop point marker
-        if (!_loopBlockMap.has(_chainStartRom)) {
-          _loopBlockMap.set(_chainStartRom, pos);
+        _chainStartRom  = pos;
+        _isFirstBlock   = false;
+        _expectedRawOff = rawOffset + 16; // next block should be +16 sample-words
+      } else {
+        if (rawOffset !== _expectedRawOff && _chainStartRom >= 0) {
+          // Non-sequential: this block is the loop point for this chain
+          if (!_loopBlockMap.has(_chainStartRom)) {
+            _loopBlockMap.set(_chainStartRom, pos);
+          }
         }
+        _expectedRawOff = rawOffset + 16;
       }
 
       // Detailed logging: first 3 complete sample chains
@@ -1511,12 +1521,12 @@
       const brr = encodeBrrBlock(pcmOffset, decoderState, forcedFilter);
       // PCMF bit 0 = BRR end flag. PCMF bit 1 is NOT the BRR loop flag —
       // it is set on every block and means "carry decoder state".
-      // Only set loop=1 on end blocks for samples that actually loop.
-      // One-shot samples (SFX, etc.) must use end=1 + loop=0, otherwise
-      // the SPC700 voice loops indefinitely and corrupts subsequent audio.
+      // Only set BRR loop=1 on end blocks for samples that actually have a loop point.
+      // One-shot samples must use end=1 + loop=0; forcing loop=1 makes the SPC700
+      // replay them indefinitely, corrupting the voice and drowning out other channels.
       if (endBit) {
         const isLooping = _loopBlockMap.has(_chainStartRom);
-        brr[0] |= isLooping ? 0x03 : 0x01; // looping: end+loop; one-shot: end only
+        brr[0] |= isLooping ? 0x03 : 0x01;
       }
       for (let b = 0; b < 9 && pos + b < rom.length; b++) rom[pos + b] = brr[b];
       if (endBit) {
