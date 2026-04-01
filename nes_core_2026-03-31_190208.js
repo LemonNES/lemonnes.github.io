@@ -17,7 +17,7 @@ console.log("nes_core.js loaded");
   const CPU_FREQ = 1789773;
   const AUDIO_SAMPLE_RATE = 44100;
   const CYCLES_PER_SAMPLE = CPU_FREQ / AUDIO_SAMPLE_RATE;
-  const NTSC_FPS = 60.0988;
+  const NTSC_FPS = 120.0988;
   const CPU_CYCLES_PER_FRAME = Math.round(CPU_FREQ / NTSC_FPS);
   // ===== Utilities =====
   const clamp=(v,min,max)=>v<min?min:v>max?max:v;
@@ -597,6 +597,55 @@ class Mapper3 extends Mapper {
                 // $E000-$FFFE: IRQ disable
                 // ===== CRITICAL: Disable IRQ and CLEAR the IRQ line =====
                 this.irqEnable = false;
+                if (this.cpu) {
+                    this.cpu.irqLine = false;  // Clear the level-triggered IRQ line
+                }
+            }
+        } else {
+            if (addr < 0xA000) {
+                this.bankData[this.bankSelect & 7] = val;
+                (this.bankSelect & 7) >= 6 ? this.updatePrgMapping() : this.updateChrMapping();
+            } else if (addr < 0xC000) {
+                // $A001-$BFFF: PRG RAM protect (not implemented)
+            } else if (addr < 0xE000) {
+                // $C001-$DFFF: IRQ reload
+                // ===== Set reload flag - counter will reload on NEXT clock =====
+                this.irqCounter = 0;
+                this.irqReloadPending = true;
+            } else {
+                // $E001-$FFFF: IRQ enable
+                // ===== CRITICAL: Enable IRQ =====
+                // Note: Enabling IRQ does NOT immediately assert the line.
+                this.irqEnable = true;
+                // Do NOT assert cpu.irqLine here - it only fires when counter hits 0
+            }
+        }
+    }
+
+    // ===== Update PRG Bank Mapping =====
+    updatePrgMapping() {
+        // PRG mode determines which banks are mapped where
+        const b8 = this.prgMode === 0 ? this.bankData[6] : this.lastBank - 1;
+        const bC = this.prgMode === 0 ? this.lastBank - 1 : this.bankData[6];
+        this.prgBanks[0] = b8;
+        this.prgBanks[1] = this.bankData[7];
+        this.prgBanks[2] = bC;
+        this.prgBanks[3] = this.lastBank;
+    }
+
+    // ===== Update CHR Bank Mapping =====
+    updateChrMapping() {
+        const R = this.bankData;
+        this.chrBanks[0] = R[0] & 0xFE;
+        this.chrBanks[1] = R[0] | 1;
+        this.chrBanks[2] = R[1] & 0xFE;
+        this.chrBanks[3] = R[1] | 1;
+        this.chrBanks[4] = R[2];
+        this.chrBanks[5] = R[3];
+        this.chrBanks[6] = R[4];
+        this.chrBanks[7] = R[5];
+    }
+}
 
   class Mapper9 extends Mapper {
   constructor(cart) {
@@ -749,7 +798,7 @@ class Mapper3 extends Mapper {
 
   // Mapper registry: Index matches iNES mapper ID
   const mappers = [
-    Mapper0, Mapper1, Mapper2, Mapper3, null,
+    Mapper0, Mapper1, Mapper2, Mapper3, Mapper4,
     null, null, null, null, Mapper9 // Index 9 = Mapper9
   ];
 
